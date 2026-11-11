@@ -75,6 +75,22 @@ assert.deepEqual(t('T1_Store').recentDays[14], { label: '10-Nov', value: 17 });
 assert.equal(t('T1_Store').recentDays.reduce((a, d) => a + d.value, 0), 150);
 assert.deepEqual(t('T4_Store').lastMonths, [{ label: 'Sep', value: 0 }, { label: 'Oct', value: 0 }, { label: 'Nov', value: 0 }]);
 
+// Apps Script feed sends day headers as Date strings, not '27-oct'.
+// Same 17 days, same values -> identical recentDays as the '27-oct' case.
+const WDAY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const MON_S = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const gasDay = dt => `${WDAY[dt.getUTCDay()]} ${MON_S[dt.getUTCMonth()]} ${String(dt.getUTCDate()).padStart(2, '0')} ${dt.getUTCFullYear()} 00:00:00 gmt+0530 (india standard time)`;
+const DAY_H_GAS = [...Array(17)].map((_, i) => gasDay(new Date(Date.UTC(2026, 9, 25 + i))));
+const ei3gas = { h: ['ss_store', 'circle', 'sqft', 'current store status', 'sep', 'oct', 'nov', ...DAY_H_GAS], rows: ei3.rows };
+const r3gas = compute({ ei: ei3gas, us: us3, sw: sw3 }, RULES);
+const tg = r3gas.stores.find(s => s.store === 'T1_Store');
+assert.equal(tg.recentDays.length, 15);
+assert.deepEqual(tg.recentDays[0], { label: '27-Oct', value: 3 });
+assert.deepEqual(tg.recentDays[14], { label: '10-Nov', value: 17 });
+assert.equal(tg.recentDays.reduce((a, d) => a + d.value, 0), 150);
+assert.deepEqual(tg.lastMonths, [{ label: 'Sep', value: 100 }, { label: 'Oct', value: 200 }, { label: 'Nov', value: 300 }]);
+assert.equal(tg.storeStatus, 'Active');
+
 // Editable rules: cuts travel in the payload, tiers come from mult.
 // A 5-tier rule set (300 band, m=8, s2w=400, extra cut {max:7, sqft:200}):
 // a 300 store with ratio >= 7 gets effective 300; a 25 store at ratio 6.5
