@@ -3,28 +3,39 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Store Stock Capacity Tracker</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="app.css"></head>
 <body>
+<div id="load" class="load-overlay">
+ <div class="load-box">
+  <div class="load-brand"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 9-14 9z" fill="#e11d1d"/></svg> shadowfax</div>
+  <p class="load-text">Loading your inventory data...</p>
+  <div class="load-bar"><div id="load-bar-fill"></div></div>
+  <p class="load-stage" id="load-stage">Connecting to Google Sheets...</p>
+  <div id="load-err" class="hide"><p id="load-err-text" class="err-text"></p><button id="load-retry" class="p">Retry</button></div>
+ </div>
+</div>
 <nav id="sidebar">
-<div class="brand"><span class="logo">▶</span> shadowfax</div>
-<a data-v="dash" class="on">🏠 Dashboard</a>
-<a data-v="rec">🧾 Store Reconciliation</a>
-<a data-v="ledger">📒 Stock Ledger</a>
-<a data-v="txn">⇄ Transactions</a>
-<a data-v="master">🏪 Stores Master</a>
-<a data-v="rules">⚖️ Allocation Rules</a>
-<a data-v="reports">📄 Reports</a>
-<a data-v="dq">⚠️ Data Quality <span class="nav-badge hide" id="dq-badge"></span></a>
+<div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 9-14 9z" fill="#e11d1d"/></svg> shadowfax</div>
+<a data-v="dash" class="on"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg> Dashboard</a>
+<a data-v="rec"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10M15 10v10"/></svg> Store Reconciliation</a>
+<a data-v="ledger"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg> Stock Ledger</a>
+<a data-v="txn"><svg viewBox="0 0 24 24"><path d="M7 16V4M7 4L3 8M7 4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg> Transactions</a>
+<a data-v="master"><svg viewBox="0 0 24 24"><path d="M3 9l1.5-5h15L21 9M3 9v11a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9M3 9h18M9 21v-6h6v6"/></svg> Stores Master</a>
+<a data-v="rules"><svg viewBox="0 0 24 24"><path d="M4 6h9M19 6h1M4 12h3M13 12h7M4 18h11M21 18h-1"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg> Allocation Rules</a>
+<a data-v="reports"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 15l2-2 2 2 3-3"/></svg> Reports</a>
+<a data-v="dq"><svg viewBox="0 0 24 24"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg> Data Quality <span class="nav-badge hide" id="dq-badge"></span></a>
 <div class="side-foot"><span class="ver">v1.0</span></div>
 </nav>
 <main>
-<header><div><h1>Store Stock Capacity Tracker</h1><small>Projected vs Actual Stock, Space Utilization &amp; S2W Monitoring</small></div>
-<div class="top-right"><small id="upd">Not synced</small><button id="ref" title="Refresh data">↻</button><span id="custom-chip" class="chip hide" title="The allocation rules were changed in this browser — they differ from the rules that came with the data">Custom rules active</span>
-<div class="bell-wrap"><button id="bell" title="Data-quality warnings">🔔<span class="bell-badge hide" id="bell-badge"></span></button>
+<header><div><h1 id="page-title">Store Stock Capacity Tracker</h1><small id="page-desc">Projected vs Actual Stock, Space Utilization &amp; S2W Monitoring</small></div>
+<div class="top-right"><small id="upd">Not synced</small><button id="ref" title="Refresh data"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/></svg></button><span id="custom-chip" class="chip hide" title="The allocation rules were changed in this browser — they differ from the rules that came with the data">Custom rules active</span>
+<div class="bell-wrap"><button id="bell" title="Data-quality warnings"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span class="bell-badge hide" id="bell-badge"></span></button>
 <div id="bell-dd" class="bell-dd hide"></div></div>
 <div class="user-chip"><span class="avatar">MF</span><span class="user-meta"><b>Meet Fluorine</b><small>Operations</small></span></div></div></header>
 <div class="pad">
-<div id="msg" class="err hide"></div><div id="load" class="card">Loading from Google Sheets…</div>
 
 <section id="dash" class="hide">
  <div class="kpis" id="kp"></div>
@@ -32,14 +43,15 @@
  <div class="dash-grid">
  <div class="dash-left">
   <div class="card" id="picker-card">
-   <h2>🔍 Search &amp; Select Store</h2>
+   <h2>Search &amp; Select Store</h2>
    <div class="picker"><input id="store-search" placeholder="Search store or circle…" autocomplete="off">
    <div id="store-dd" class="picker-dd hide"></div></div>
    <div class="pick-fields">
-    <div class="pf"><span>📍 Circle</span><b id="pf-circle">—</b></div>
-    <div class="pf"><span>▦ Store Sq.Ft</span><b id="pf-sqft">—</b></div>
-    <div class="pf"><span>🏷 Store Type</span><b>Shadowfax</b></div>
-    <div class="pf"><span>◷ Status</span><b id="pf-status">—</b></div>
+    <div class="pf"><span>Circle</span><b id="pf-circle">—</b></div>
+    <div class="pf"><span>Store Sq.Ft</span><b id="pf-sqft">—</b></div>
+    <div class="pf"><span>Effective Sq.Ft</span><b id="pf-eff">—</b></div>
+    <div class="pf"><span>Store Type</span><b>Shadowfax</b></div>
+    <div class="pf"><span>Status</span><b id="pf-status">—</b></div>
    </div>
   </div>
   <div class="card">
@@ -54,7 +66,7 @@
  </div>
  <div class="dash-right">
   <div class="card" id="summary-card">
-   <div class="card-head"><h2>▤ Store Stock Summary</h2><span id="cap-badge" class="cap-badge cap-none">Capacity Status: —</span></div>
+   <div class="card-head"><h2>Store Stock Summary</h2><span id="cap-badge" class="cap-badge cap-none">Capacity Status: —</span></div>
    <div class="stat4" id="sum-stats"></div>
    <div class="align">
     <div class="align-head"><span>Space Occupancy (Usable)</span><b id="align-pct">—</b><span id="align-frac" class="muted"></span></div>
@@ -64,14 +76,14 @@
   </div>
   <div class="card">
    <div class="card-head">
-    <div class="tabs">
-     <button class="tab on" data-tab="mat">▣ Material-wise Reconciliation</button>
-     <button class="tab" data-tab="txn">⇄ Transaction Summary</button>
-     <button class="tab" data-tab="trend">↗ Trend (Last 3 Months)</button>
+    <div class="tabs" id="dash-tabs">
+     <button class="tab on" data-tab="mat">Material-wise Reconciliation</button>
+     <button class="tab" data-tab="txn">Transaction Summary</button>
+     <button class="tab" data-tab="trend">Trend (Last 3 Months)</button>
     </div>
     <button id="mat-export">⬇ Export</button>
    </div>
-   <div id="tab-mat"><table id="mt"></table></div>
+   <div id="tab-mat"><div class="tbl-scroll"><table id="mt"></table></div></div>
    <div id="tab-txn" class="hide"><div id="txn-body"></div></div>
    <div id="tab-trend" class="hide"><div id="trend-body"></div></div>
   </div>
@@ -83,7 +95,8 @@
  <div class="card row"><select id="st" style="min-width:280px"></select><span id="meta" style="color:var(--mu)"></span>
  <button class="p" id="ap">Apply</button><button id="rs">Reset</button><button id="ex">Export CSV</button><input id="q" placeholder="Search material…"></div>
  <div class="kpis" id="rk"></div>
- <div class="card"><table id="rt"></table></div>
+ <div class="card"><div class="tbl-scroll"><table id="rt"></table></div>
+ <p class="muted">S2W is tracked per store, not per material — see S2W Stock / Limit in the summary above.</p></div>
 </section>
 
 <section id="ledger" class="hide"><div class="card"><h2>Stock Ledger</h2>
@@ -91,19 +104,18 @@
 <p>To enable this page, wire a ledger feed — dated inward / outward / issuance rows per store and material — into <code>/api/data</code>. Until then this page stays empty rather than showing made-up entries.</p>
 </div></section>
 
-<section id="txn" class="hide"><div class="card"><h2>Transactions</h2>
-<p>No transaction feed is connected yet. This page will list dated stock movements (inward, outward, issuance, adjustments) per store once a ledger feed is wired into <code>/api/data</code>. The Report tab snapshot that powers the dashboard carries no transaction history.</p>
-</div></section>
+<section id="txn" class="hide">
+ <div class="card row"><select id="txn-store" style="min-width:260px"></select><select id="txn-date" style="min-width:140px"></select><input id="txn-q" placeholder="Search store or circle…" style="min-width:220px"><span id="txn-meta" class="muted"></span><button class="p" id="txn-export">⬇ Export CSV</button></div>
+ <div class="card"><div class="tbl-scroll"><table id="txn-table"></table></div>
+ <p class="muted">Issuance counts from the EI Stats daily record (last 15 days). Item-level detail (material, reference number) is not in the source data.</p></div>
+</section>
 
 <section id="master" class="hide">
- <div class="card row"><input id="mq" placeholder="Search store or circle…" style="min-width:280px"><span id="mmeta" class="muted"></span></div>
- <div class="card"><div class="tbl-scroll"><table id="mtbl"></table></div></div>
+ <div class="card row"><input id="mq" placeholder="Search store or circle…" style="min-width:280px"><span id="mmeta" class="muted"></span><span class="muted">Click a row to open the store on the dashboard.</span></div>
+ <div class="card"><div class="tbl-scroll master-scroll"><table id="mtbl"></table></div></div>
 </section>
 
 <section id="rules" class="hide">
- <div class="card"><b>Base allocation (25 Sq.Ft)</b><table id="ra"></table><p class="muted">Edit a base qty and the projected stock, statuses, KPIs and effective space update everywhere at once. Material names can't change — a new material has no column in the Report tab, so there is nothing to count it from.</p></div>
- <div class="card"><b>Multipliers &amp; S2W limits</b><table id="rm"></table></div>
- <div class="card"><b>Effective space thresholds</b><div id="rc"></div></div>
  <div class="card"><div class="row">
   <button id="rules-reset">↺ Reset to defaults</button>
   <button id="rules-export">⬇ Download rules JSON</button>
@@ -112,18 +124,45 @@
   <span id="rules-chip" class="chip hide">Custom rules active</span>
  </div><p id="rules-err" class="err-text hide"></p>
  <p class="muted" style="line-height:1.6">Rules edited here apply in this browser only — they are saved on this device, not on the server. The site has no login, so there is no server-side save: use Download / Import JSON to carry a rule set to another device.</p></div>
+ <div class="card">
+  <div class="tabs" id="rules-tabs">
+   <button class="tab on" data-rtab="base">Base Allocation</button>
+   <button class="tab" data-rtab="mult">Sq.Ft Multipliers</button>
+   <button class="tab" data-rtab="s2w">S2W Limits</button>
+   <button class="tab" data-rtab="eff">Effective Space</button>
+   <button class="tab" data-rtab="hist">Change History</button>
+  </div>
+  <div id="rtab-base"><b>Base allocation (25 Sq.Ft)</b><table id="ra"></table><p class="muted">Edit a base qty and the projected stock, statuses, KPIs and effective space update everywhere at once. Material names can't change — a new material has no column in the Report tab, so there is nothing to count it from.</p></div>
+  <div id="rtab-mult" class="hide"><b>Sq.Ft multipliers</b><table id="rm-mult"></table>
+  <div class="row" style="margin-top:10px">
+   <input type="number" min="1" step="1" id="new-sqft" placeholder="Sq.Ft" class="num" aria-label="New band Sq.Ft">
+   <input type="number" min="0" step="0.1" id="new-m" placeholder="Multiplier ×" class="num" aria-label="New band multiplier">
+   <input type="number" min="0" step="1" id="new-s2w" placeholder="S2W max" class="num" aria-label="New band S2W max">
+   <button id="add-band">+ Add band</button>
+  </div>
+  <p class="muted">A band's multiplier decides the projected stock for stores of that size. Add a band above to cover a new size (for example 300 Sq.Ft).</p></div>
+  <div id="rtab-s2w" class="hide"><b>S2W limits</b><table id="rm-s2w"></table><p class="muted">Maximum S2W stock allowed for each store size. Stores above the limit show as Limit Breached.</p></div>
+  <div id="rtab-eff" class="hide"><b>Effective space thresholds</b><div id="rc"></div></div>
+  <div id="rtab-hist" class="hide"><b>Change history</b><p class="muted">Rule changes made in this browser, newest first. The site has no login, so history is kept on this device only.</p><div id="rhist"></div></div>
+ </div>
  <div class="card"><b>Matched tolerance: ±<span id="tol">1</span>%</b><p class="muted" style="line-height:1.6">A material or a store whose variance is within ±1% of its projected quantity counts as <b>Matched</b> (e.g. Cat 6 at −0.5% variance is Matched, not Shortage). Outside the tolerance, the sign of the variance decides Excess / Shortage.</p></div>
 </section>
 
 <section id="reports" class="hide"><div class="card"><h2>Reports</h2>
 <p class="muted">CSVs are generated in your browser from the live data loaded above — no stored files.</p>
-<div class="row">
-<button class="p" id="rep-all">⬇ All stores CSV</button>
-<button id="rep-short">⬇ Shortage stores CSV</button>
-<button id="rep-excess">⬇ Excess stores CSV</button>
-<button id="rep-breach">⬇ S2W breaches CSV</button>
+<div class="row"><label class="muted">Circle <select id="rep-circle"><option value="">All circles</option></select></label><span class="muted">The circle filter applies to every report below.</span></div>
+<div class="rep-grid">
+ <div class="rep-card"><b>All Stores Report</b><p>Complete store-wise stock summary.</p><button class="p" id="rep-all">⬇ Download</button></div>
+ <div class="rep-card"><b>Less Space Report</b><p>Stores with stock shortage.</p><button id="rep-short">⬇ Download</button></div>
+ <div class="rep-card"><b>Extra Space Report</b><p>Stores with excess stock.</p><button id="rep-excess">⬇ Download</button></div>
+ <div class="rep-card"><b>Okay Stores Report</b><p>Stores that are neither less nor extra space.</p><button id="rep-okay">⬇ Download</button></div>
+ <div class="rep-card"><b>Dedicated 300 Sq.Ft Report</b><p>Stores with 300 Sq.Ft (dedicated stores).</p><button id="rep-dedicated">⬇ Download</button></div>
+ <div class="rep-card"><b>S2W Breach Report</b><p>Stores exceeding the S2W limit.</p><button id="rep-breach">⬇ Download</button></div>
+ <div class="rep-card"><b>Material-wise Stock Report</b><p>Every store × material with projected, actual and variance.</p><button id="rep-material">⬇ Download</button></div>
+ <div class="rep-card"><b>Transaction Report</b><p>Daily issuance for the last 15 days (EI Stats).</p><button id="rep-txn">⬇ Download</button></div>
 </div></div></section>
 
-<section id="dq" class="hide"><div class="card"><b>Data-quality warnings</b><ul id="wl"></ul></div></section>
+<section id="dq" class="hide"><div class="card"><h2>Data-quality warnings</h2>
+<p id="dq-meta" class="muted"></p><div class="tbl-scroll"><table id="dq-table"></table></div></div></section>
 </div></main>
 <script src="app.js"></script></body></html>
