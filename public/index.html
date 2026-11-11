@@ -1,24 +1,81 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Store Stock Capacity Tracker</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <link rel="stylesheet" href="app.css"></head>
 <body>
-<nav><b>shadowfax</b>
-<a data-v="dash" class="on">Dashboard</a><a data-v="rec">Reconciliation</a><a data-v="rules">Allocation Rules</a><a data-v="dq">Data Quality</a></nav>
+<nav id="sidebar">
+<div class="brand"><span class="logo">▶</span> shadowfax</div>
+<a data-v="dash" class="on">🏠 Dashboard</a>
+<a data-v="rec">🧾 Store Reconciliation</a>
+<a data-v="ledger">📒 Stock Ledger</a>
+<a data-v="txn">⇄ Transactions</a>
+<a data-v="master">🏪 Stores Master</a>
+<a data-v="rules">⚖️ Allocation Rules</a>
+<a data-v="reports">📄 Reports</a>
+<a data-v="dq">⚠️ Data Quality <span class="nav-badge hide" id="dq-badge"></span></a>
+<div class="side-foot"><span class="ver">v1.0</span></div>
+</nav>
 <main>
-<header><div><h1>Store Stock Tracker</h1><small>Projected vs Actual Stock · Capacity &amp; S2W Monitoring</small></div>
-<div class="row"><small id="upd">Not synced</small><button id="ref">Refresh</button><button id="th">Dark</button></div></header>
+<header><div><h1>Store Stock Capacity Tracker</h1><small>Projected vs Actual Stock, Space Utilization &amp; S2W Monitoring</small></div>
+<div class="top-right"><small id="upd">Not synced</small><button id="ref" title="Refresh data">↻</button>
+<div class="bell-wrap"><button id="bell" title="Data-quality warnings">🔔<span class="bell-badge hide" id="bell-badge"></span></button>
+<div id="bell-dd" class="bell-dd hide"></div></div>
+<div class="user-chip"><span class="avatar">MF</span><span class="user-meta"><b>Meet Fluorine</b><small>Operations</small></span></div></div></header>
 <div class="pad">
 <div id="msg" class="err hide"></div><div id="load" class="card">Loading from Google Sheets…</div>
 
 <section id="dash" class="hide">
- <div class="card row"><select id="fC"><option value="">All circles</option></select><select id="fS"><option value="">All sizes</option></select>
- <select id="fT"><option value="">All statuses</option><option>Excess</option><option>Shortage</option><option>Matched</option></select></div>
  <div class="kpis" id="kp"></div>
- <div class="grid2"><div class="card"><b>Status distribution</b><canvas id="ch1" height="140"></canvas></div>
- <div class="card"><b>Circle-wise shortage</b><canvas id="ch2" height="140"></canvas></div></div>
- <div class="grid2"><div class="card"><b>Top 10 shortage</b><table id="tS"></table></div><div class="card"><b>Top 10 excess</b><table id="tE"></table></div></div>
- <div class="card"><b>S2W limit breaches</b><table id="tB"></table></div>
+ <div id="kpi-detail" class="card hide"></div>
+ <div class="dash-grid">
+ <div class="dash-left">
+  <div class="card" id="picker-card">
+   <h2>🔍 Search &amp; Select Store</h2>
+   <div class="picker"><input id="store-search" placeholder="Search store or circle…" autocomplete="off">
+   <div id="store-dd" class="picker-dd hide"></div></div>
+   <div class="pick-fields">
+    <div class="pf"><span>📍 Circle</span><b id="pf-circle">—</b></div>
+    <div class="pf"><span>▦ Store Sq.Ft</span><b id="pf-sqft">—</b></div>
+    <div class="pf"><span>🏷 Store Type</span><b>Shadowfax</b></div>
+    <div class="pf"><span>◷ Status</span><b id="pf-status">—</b></div>
+   </div>
+  </div>
+  <div class="card">
+   <h2>Stock Status Overview</h2>
+   <div class="donut-wrap"><canvas id="ch1" height="180"></canvas><div id="donut-empty" class="donut-empty hide"></div></div>
+   <div class="legend" id="donut-legend"></div>
+  </div>
+  <div class="card">
+   <h2>Store Capacity by Sq.Ft <span class="info" title="Projected stock = base qty × multiplier. S2W Limit is the max S2W stock allowed for that store size.">ⓘ</span></h2>
+   <table id="cap-table"></table>
+  </div>
+ </div>
+ <div class="dash-right">
+  <div class="card" id="summary-card">
+   <div class="card-head"><h2>▤ Store Stock Summary</h2><span id="cap-badge" class="cap-badge cap-none">Capacity Status: —</span></div>
+   <div class="stat4" id="sum-stats"></div>
+   <div class="align">
+    <div class="align-head"><span>Stock Alignment (Usable)</span><b id="align-pct">—</b><span id="align-frac" class="muted"></span></div>
+    <div class="bar"><div id="align-bar" class="bar-none" style="width:0%"></div></div>
+   </div>
+  </div>
+  <div class="card">
+   <div class="card-head">
+    <div class="tabs">
+     <button class="tab on" data-tab="mat">▣ Material-wise Reconciliation</button>
+     <button class="tab" data-tab="txn">⇄ Transaction Summary</button>
+     <button class="tab" data-tab="trend">↗ Trend (Last 3 Months)</button>
+    </div>
+    <button id="mat-export">⬇ Export</button>
+   </div>
+   <div id="tab-mat"><table id="mt"></table></div>
+   <div id="tab-txn" class="hide empty">No transaction ledger is connected yet. Actual stock on this tracker comes from the Report tab snapshot, so there is no per-transaction history to summarise. A ledger feed (dated inward / outward / issuance rows per store and material) would be needed to fill this tab.</div>
+   <div id="tab-trend" class="hide empty">No stock history is available — the Report tab is a single snapshot, so there is no trend to draw yet. Trend needs dated snapshots of the same Report over time.</div>
+  </div>
+ </div>
+ </div>
 </section>
 
 <section id="rec" class="hide">
@@ -28,9 +85,34 @@
  <div class="card"><table id="rt"></table></div>
 </section>
 
-<section id="rules" class="hide"><div class="card"><b>Base allocation (25 Sq.Ft)</b><table id="ra"></table></div>
-<div class="card"><b>Multipliers &amp; S2W limits</b><table id="rm"></table></div>
-<button class="p hide" id="sv">Save changes (Admin)</button></section>
+<section id="ledger" class="hide"><div class="card"><h2>Stock Ledger</h2>
+<p>No transaction ledger is connected yet. This tracker reads actual stock from the Report tab snapshot only, so per-transaction history (inward, outward, issuance, adjustments) is not available.</p>
+<p>To enable this page, wire a ledger feed — dated inward / outward / issuance rows per store and material — into <code>/api/data</code>. Until then this page stays empty rather than showing made-up entries.</p>
+</div></section>
+
+<section id="txn" class="hide"><div class="card"><h2>Transactions</h2>
+<p>No transaction feed is connected yet. This page will list dated stock movements (inward, outward, issuance, adjustments) per store once a ledger feed is wired into <code>/api/data</code>. The Report tab snapshot that powers the dashboard carries no transaction history.</p>
+</div></section>
+
+<section id="master" class="hide">
+ <div class="card row"><input id="mq" placeholder="Search store or circle…" style="min-width:280px"><span id="mmeta" class="muted"></span></div>
+ <div class="card"><div class="tbl-scroll"><table id="mtbl"></table></div></div>
+</section>
+
+<section id="rules" class="hide">
+ <div class="card"><b>Base allocation (25 Sq.Ft)</b><table id="ra"></table></div>
+ <div class="card"><b>Multipliers &amp; S2W limits</b><table id="rm"></table></div>
+ <div class="card"><b>Matched tolerance: ±<span id="tol">1</span>%</b><p class="muted" style="line-height:1.6">A material or a store whose variance is within ±1% of its projected quantity counts as <b>Matched</b> (e.g. Cat 6 at −0.5% variance is Matched, not Shortage). Outside the tolerance, the sign of the variance decides Excess / Shortage.</p></div>
+</section>
+
+<section id="reports" class="hide"><div class="card"><h2>Reports</h2>
+<p class="muted">CSVs are generated in your browser from the live data loaded above — no stored files.</p>
+<div class="row">
+<button class="p" id="rep-all">⬇ All stores CSV</button>
+<button id="rep-short">⬇ Shortage stores CSV</button>
+<button id="rep-excess">⬇ Excess stores CSV</button>
+<button id="rep-breach">⬇ S2W breaches CSV</button>
+</div></div></section>
 
 <section id="dq" class="hide"><div class="card"><b>Data-quality warnings</b><ul id="wl"></ul></div></section>
 </div></main>

@@ -3,7 +3,7 @@
 const SRC = {
   us: { id: '1VL7vKeDP5VeUa8v2wr2GvpJn73tHk3JPmuHVfOuq0B0', gid: 0,         c0: 18, c1: 31 }, // Report!R:AE
   sw: { id: '1VL7vKeDP5VeUa8v2wr2GvpJn73tHk3JPmuHVfOuq0B0', gid: 745322622, c0: 15, c1: 23 }, // S2W pendency O:W
-  ei: { id: '1MBgRfa6AR1YGG1f8LilgUdvUAbrO4gLPHqLK6w4cZ8Q', gid: 497754035, c0: 1,  c1: 3  }  // EI Stats A:C
+  ei: { id: '1MBgRfa6AR1YGG1f8LilgUdvUAbrO4gLPHqLK6w4cZ8Q', gid: 497754035, c0: 1,  c1: 20 }  // EI Stats A:T (SS_Store .. Current Store Status)
 };
 
 function doGet(e) {
