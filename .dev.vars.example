@@ -1,0 +1,6 @@
+# Copy to .dev.vars for local testing (never commit .dev.vars). Value = the whole service-account JSON key on ONE line.
+GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n","client_email":"...@....iam.gserviceaccount.com"}
+
+# Alternative (no Google Cloud project): Apps Script feed
+APPS_SCRIPT_URL=https://script.google.com/macros/s/XXXX/exec
+APPS_SCRIPT_KEY=your-long-random-key

@@ -1,0 +1,10 @@
+{
+  "name": "store-stock-tracker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/engine.test.js",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": { "wrangler": "^4.0.0" }
+}

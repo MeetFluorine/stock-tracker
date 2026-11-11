@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="stylesheet" href="app.css"></head>
+<body>
+<nav><b>shadowfax</b>
+<a data-v="dash" class="on">Dashboard</a><a data-v="rec">Reconciliation</a><a data-v="rules">Allocation Rules</a><a data-v="dq">Data Quality</a></nav>
+<main>
+<header><div><h1>Store Stock Tracker</h1><small>Projected vs Actual Stock · Capacity &amp; S2W Monitoring</small></div>
+<div class="row"><small id="upd">Not synced</small><button id="ref">Refresh</button><button id="th">Dark</button></div></header>
+<div class="pad">
+<div id="msg" class="err hide"></div><div id="load" class="card">Loading from Google Sheets…</div>
+
+<section id="dash" class="hide">
+ <div class="card row"><select id="fC"><option value="">All circles</option></select><select id="fS"><option value="">All sizes</option></select>
+ <select id="fT"><option value="">All statuses</option><option>Excess</option><option>Shortage</option><option>Matched</option></select></div>
+ <div class="kpis" id="kp"></div>
+ <div class="grid2"><div class="card"><b>Status distribution</b><canvas id="ch1" height="140"></canvas></div>
+ <div class="card"><b>Circle-wise shortage</b><canvas id="ch2" height="140"></canvas></div></div>
+ <div class="grid2"><div class="card"><b>Top 10 shortage</b><table id="tS"></table></div><div class="card"><b>Top 10 excess</b><table id="tE"></table></div></div>
+ <div class="card"><b>S2W limit breaches</b><table id="tB"></table></div>
+</section>
+
+<section id="rec" class="hide">
+ <div class="card row"><select id="st" style="min-width:280px"></select><span id="meta" style="color:var(--mu)"></span>
+ <button class="p" id="ap">Apply</button><button id="rs">Reset</button><button id="ex">Export CSV</button><input id="q" placeholder="Search material…"></div>
+ <div class="kpis" id="rk"></div>
+ <div class="card"><table id="rt"></table></div>
+</section>
+
+<section id="rules" class="hide"><div class="card"><b>Base allocation (25 Sq.Ft)</b><table id="ra"></table></div>
+<div class="card"><b>Multipliers &amp; S2W limits</b><table id="rm"></table></div>
+<button class="p hide" id="sv">Save changes (Admin)</button></section>
+
+<section id="dq" class="hide"><div class="card"><b>Data-quality warnings</b><ul id="wl"></ul></div></section>
+</div></main>
+<script src="app.js"></script></body></html>
