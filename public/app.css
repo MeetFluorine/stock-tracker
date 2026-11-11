@@ -76,6 +76,16 @@ header small{color:var(--mu)}
 .bar-crit{background:#ef4444}
 .bar-none{background:#9ca3af}
 .warn{color:var(--amb)}
+.eff-vol{color:var(--mu);font-size:12px;display:block;margin-top:2px}
+.ladder-range{display:block;font-size:10px;color:var(--mu);margin-top:2px}
+.ladder-cell.eff .ladder-range{color:inherit;opacity:.75}
+.chip{background:var(--abg);color:var(--amb);border-radius:20px;padding:4px 10px;font-size:11px;font-weight:700;white-space:nowrap}
+.num{width:92px;text-align:right}
+.cut-row{margin:4px 0}
+.cut-row label{display:flex;gap:6px;align-items:center}
+.icon-btn{padding:2px 9px;line-height:1.4;color:var(--red);font-weight:700}
+.err-text{color:var(--red);font-size:12px;line-height:1.5;margin:8px 0 0}
+.err-text.hide{display:none}
 .eff-box{margin-top:12px;border:1px solid var(--bd);border-radius:8px;padding:10px;background:#f9fafb}
 .eff-top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .eff-label{color:var(--mu);font-size:12px;display:block}

@@ -19,7 +19,7 @@
 </nav>
 <main>
 <header><div><h1>Store Stock Capacity Tracker</h1><small>Projected vs Actual Stock, Space Utilization &amp; S2W Monitoring</small></div>
-<div class="top-right"><small id="upd">Not synced</small><button id="ref" title="Refresh data">↻</button>
+<div class="top-right"><small id="upd">Not synced</small><button id="ref" title="Refresh data">↻</button><span id="custom-chip" class="chip hide" title="The allocation rules were changed in this browser — they differ from the rules that came with the data">Custom rules active</span>
 <div class="bell-wrap"><button id="bell" title="Data-quality warnings">🔔<span class="bell-badge hide" id="bell-badge"></span></button>
 <div id="bell-dd" class="bell-dd hide"></div></div>
 <div class="user-chip"><span class="avatar">MF</span><span class="user-meta"><b>Meet Fluorine</b><small>Operations</small></span></div></div></header>
@@ -101,8 +101,17 @@
 </section>
 
 <section id="rules" class="hide">
- <div class="card"><b>Base allocation (25 Sq.Ft)</b><table id="ra"></table></div>
+ <div class="card"><b>Base allocation (25 Sq.Ft)</b><table id="ra"></table><p class="muted">Edit a base qty and the projected stock, statuses, KPIs and effective space update everywhere at once. Material names can't change — a new material has no column in the Report tab, so there is nothing to count it from.</p></div>
  <div class="card"><b>Multipliers &amp; S2W limits</b><table id="rm"></table></div>
+ <div class="card"><b>Effective space thresholds</b><div id="rc"></div></div>
+ <div class="card"><div class="row">
+  <button id="rules-reset">↺ Reset to defaults</button>
+  <button id="rules-export">⬇ Download rules JSON</button>
+  <button id="rules-import-btn">⬆ Import rules JSON</button>
+  <input type="file" id="rules-import" accept=".json,application/json" class="hide">
+  <span id="rules-chip" class="chip hide">Custom rules active</span>
+ </div><p id="rules-err" class="err-text hide"></p>
+ <p class="muted" style="line-height:1.6">Rules edited here apply in this browser only — they are saved on this device, not on the server. The site has no login, so there is no server-side save: use Download / Import JSON to carry a rule set to another device.</p></div>
  <div class="card"><b>Matched tolerance: ±<span id="tol">1</span>%</b><p class="muted" style="line-height:1.6">A material or a store whose variance is within ±1% of its projected quantity counts as <b>Matched</b> (e.g. Cat 6 at −0.5% variance is Matched, not Shortage). Outside the tolerance, the sign of the variance decides Excess / Shortage.</p></div>
 </section>
 

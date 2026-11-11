@@ -74,6 +74,38 @@ assert.deepEqual(t('T1_Store').recentDays[0], { label: '27-Oct', value: 3 });
 assert.deepEqual(t('T1_Store').recentDays[14], { label: '10-Nov', value: 17 });
 assert.equal(t('T1_Store').recentDays.reduce((a, d) => a + d.value, 0), 150);
 assert.deepEqual(t('T4_Store').lastMonths, [{ label: 'Sep', value: 0 }, { label: 'Oct', value: 0 }, { label: 'Nov', value: 0 }]);
+
+// Editable rules: cuts travel in the payload, tiers come from mult.
+// A 5-tier rule set (300 band, m=8, s2w=400, extra cut {max:7, sqft:200}):
+// a 300 store with ratio >= 7 gets effective 300; a 25 store at ratio 6.5
+// gets effective 200. Unknown stores carry their raw use map + usableTotal.
+const RULES5 = { alloc: RULES.alloc,
+  mult: [...RULES.mult, { sqft: 300, m: 8, s2w: 400 }],
+  cuts: [...RULES.cuts, { max: 7, sqft: 200 }] };
+const ei5 = { h: ['ss_store', 'circle', 'sqft'], rows: [
+  ['S300_Store', 'X', 300], ['S25_Store', 'X', 25], ['U400_Store', 'X', 400]] };
+const us5 = { h: ['ss_store', 'circle', 'accessories', 'connector', 'face plate', 'ont', 'modem outdoor', 'wifi router', 'iptv', 'cat 6', 'outdoor cable'], rows: [
+  ['S300_Store', 'X', 100, 200, 100, 20, 10, 10, 10, 1000, 50000], // actual 51,450, ratio 7.98 -> effective 300
+  ['S25_Store', 'X', 100, 200, 100, 20, 10, 10, 10, 1000, 40475],  // actual 41,925, ratio 6.5 -> effective 200
+  ['U400_Store', 'X', 1, 1, 1, 1, 1, 1, 1, 1, 1]] };                 // actualTotal 9 -> Unknown, effective 25
+const r5 = compute({ ei: ei5, us: us5, sw: { h: ['ss', 'total count'], rows: [] } }, RULES5);
+const s5 = name => r5.stores.find(s => s.store === name);
+assert.equal(s5('S300_Store').projected, 51600);
+assert.equal(s5('S300_Store').effectiveSqft, 300);
+assert.equal(s5('S300_Store').spaceMismatch, false);
+assert.equal(s5('S300_Store').status, 'Matched'); // -150 on 51,600 = -0.29%, within tolerance
+assert.equal(s5('S25_Store').effectiveSqft, 200);
+assert.equal(s5('S25_Store').spaceMismatch, true);
+assert.equal(s5('U400_Store').status, 'Unknown');
+assert.equal(s5('U400_Store').effectiveSqft, 25);
+assert.equal(s5('U400_Store').spaceMismatch, false);
+assert.equal(s5('U400_Store').usableTotal, 9);
+assert.deepEqual(s5('U400_Store').use, { Accessories: 1, Connector: 1, 'Face Plate': 1, ONT: 1, 'Modem Outdoor': 1, 'WiFi Router': 1, IPTV: 1, 'Cat 6': 1, 'Outdoor Cable': 1 });
+assert.equal(s5('S300_Store').usableTotal, 51450);
+assert.equal(r5.rules.cuts.length, 4);
+assert.deepEqual(r5.rules.cuts[3], { max: 7, sqft: 200 });
+// Default rules still behave exactly as before (cuts 1.5/3/5, tiers 25/50/100/200).
+assert.deepEqual(RULES.cuts, [{ max: 1.5, sqft: 25 }, { max: 3, sqft: 50 }, { max: 5, sqft: 100 }]);
 const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
 const jwt = await signJwt({ client_email: 't@t.iam.gserviceaccount.com', private_key: privateKey }); assert.equal(jwt.split('.').length, 3);
 // Apps Script feed path with a stubbed fetch

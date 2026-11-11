@@ -18,28 +18,45 @@ const capOf=s=>{ if(!s||s.status==='Unknown') return {label:'—', cls:'cap-none
   if(s.effectiveSqft===s.sqft) return {label:'OKAY',cls:'cap-ok'};
   return s.effectiveSqft>s.sqft?{label:'Extra Space',cls:'cap-crit'}:{label:'Less Space',cls:'cap-watch'}; };
 const s2wText=s=>s.s2wMax>0?`${n(s.s2w)} / ${n(s.s2wMax)}`:`${n(s.s2w)} / —`;
-// Effective-space box for the Store Stock Summary card (tiers in order).
-// Big value + direction chip, then a tier ladder: the store's OWN tier gets an
-// outline + "Allocated" tag, the EFFECTIVE tier gets the status-colour fill +
-// "Effective" tag (both tags on one box when they are the same tier).
-const TIERS=[25,50,100,200];
+// Effective-space box for the Store Stock Summary card. Big value + direction
+// chip, then a tier ladder built from the CURRENT rules (not hardcoded): the
+// store's OWN tier gets an outline + "Allocated" tag, the EFFECTIVE tier gets
+// the status-colour fill + "Effective" tag (both tags on one box when they are
+// the same tier). Under the value, the volume in units and the unit band the
+// effective tier covers: band edges come from the current cutoffs × base total
+// (tier i: lo = ceil(cuts[i-1].max × baseTotal), hi = ceil(cuts[i].max ×
+// baseTotal) − 1; the largest tier is open-ended).
 function effBox(s){
   if(!s) return '';
   const cap=capOf(s);
+  const tiers=(D.rules.mult||[]).map(m=>m.sqft).sort((a,b)=>a-b);
+  const ladderTiers=tiers.length?tiers:[25,50,100,200];
+  const cuts=D.rules.cuts||[];
+  const baseTotal=(D.rules.alloc||[]).reduce((t,a)=>t+a.base,0);
+  const bandOf=i=>{
+    const lo=i===0?0:(cuts[i-1]?Math.ceil(cuts[i-1].max*baseTotal):0);
+    const hi=(i===ladderTiers.length-1||!cuts[i])?null:Math.ceil(cuts[i].max*baseTotal)-1;
+    return {lo,hi}; };
+  const bandText=i=>{ const b=bandOf(i); return b.hi===null?n(b.lo)+'+ units':n(b.lo)+' – '+n(b.hi)+' units'; };
   const eff=s.effectiveSqft;
   let chip, val;
   if(s.status==='Unknown'){ val=eff==null?'—':eff+' Sq.Ft'; chip='Allocated '+s.sqft+' Sq.Ft — no multiplier rule'; }
   else if(eff===null||eff===undefined){ val='—'; chip='No stock recorded'; }
   else if(eff===s.sqft){ val=eff+' Sq.Ft'; chip='Aligned with allocated '+s.sqft+' Sq.Ft'; }
   else { val=eff+' Sq.Ft';
-    const d=Math.abs(TIERS.indexOf(eff)-TIERS.indexOf(s.sqft));
+    const d=Math.abs(ladderTiers.indexOf(eff)-ladderTiers.indexOf(s.sqft));
     chip=(eff>s.sqft?'▲ ':'▼ ')+d+' tier'+(d>1?'s':'')+' '+(eff>s.sqft?'above':'below')+' allocated '+s.sqft+' Sq.Ft'; }
-  const cells=TIERS.map(t=>{
+  const vol=s.usableTotal??s.actual??0;
+  const ei=ladderTiers.indexOf(eff);
+  const volLine=eff===null||eff===undefined
+    ? '0 units · Band —'
+    : n(vol)+' units · Band '+bandText(ei<0?0:ei);
+  const cells=ladderTiers.map((t,i)=>{
     const isOwn=t===s.sqft&&s.status!=='Unknown', isEff=t===eff;
     const cls='ladder-cell'+(isOwn?' alloc':'')+(isEff?' eff '+cap.cls:'');
     const tag=isOwn&&isEff?'Allocated · Effective':isOwn?'Allocated':isEff?'Effective':'';
-    return `<div class="${cls}"><b>${t}</b><span>Sq.Ft</span><i>${tag}</i></div>`; }).join('');
-  return `<div class="eff-box"><div class="eff-top"><div><span class="eff-label">Effective Space</span><b class="eff-val">${val}</b></div><span class="eff-chip ${cap.cls}">${chip}</span></div><div class="ladder">${cells}</div></div>`;
+    return `<div class="${cls}"><b>${t}</b><span>Sq.Ft</span><i>${tag}</i><small class="ladder-range">${bandText(i)}</small></div>`; }).join('');
+  return `<div class="eff-box"><div class="eff-top"><div><span class="eff-label">Effective Space</span><b class="eff-val">${val}</b><span class="eff-vol">${volLine}</span></div><span class="eff-chip ${cap.cls}">${chip}</span></div><div class="ladder" style="grid-template-columns:repeat(${ladderTiers.length},1fr)">${cells}</div></div>`;
 }
 const PAGES=['dash','rec','ledger','txn','master','rules','reports','dq'];
 
@@ -51,23 +68,155 @@ document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>show(a.dataset.v));
 
 function load(force){ $('load').classList.remove('hide'); $('msg').classList.add('hide');
   fetch('/api/data'+(force?'?force=1':'')).then(r=>r.json().then(d=>{if(!r.ok)throw new Error(d.error||r.statusText);return d}))
-  .then(d=>{D=d;$('load').classList.add('hide');init();show('dash');})
+  .then(d=>{D=d;$('load').classList.add('hide');initPayload();init();show('dash');})
   .catch(e=>{$('load').classList.add('hide');$('msg').textContent='Could not load data: '+e.message;$('msg').classList.remove('hide');}); }
 $('ref').onclick=()=>load(true);
 
-function init(){
-  $('upd').textContent='Last Updated: '+new Date(D.updated).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'});
-  const w=D.warnings||[];
+/* ---------- Editable allocation rules (client-side only) ----------
+   The Worker has no write endpoint and no KV binding, so a rule edit lives
+   in this browser: it recomputes every store from the ORIGINAL payload data
+   (origStores, never mutated), saves the rule set to localStorage, and is
+   re-applied on every load / refresh. Download / Import JSON carries a rule
+   set to another device. */
+const LS_KEY='stock-tracker-custom-rules';
+let origStores=[], origWarnings=[], defaultRules=null;
+const cloneRules=r=>JSON.parse(JSON.stringify(r));
+const baseTotalOf=r=>(r.alloc||[]).reduce((t,a)=>t+a.base,0);
+const tiersOf=r=>(r.mult||[]).map(m=>m.sqft).sort((a,b)=>a-b);
+// Same status rule as lib/engine.js statusOf, with the payload tolerance.
+const statusOf=(v,p,tol)=>{ const t=tol??D.matchTolerancePct??1;
+  return (p>0&&Math.abs(v/p*100)<=t)?'Matched':v>0?'Excess':v<0?'Shortage':'Matched'; };
+// Same effective-tier rule as lib/engine.js effectiveSqftOf.
+const effOf=(actual,baseTotal,tiers,cuts)=>{ if(!actual||!tiers.length) return null;
+  const ratio=actual/baseTotal, cut=(cuts||[]).find(c=>ratio<c.max);
+  return cut?cut.sqft:tiers[tiers.length-1]; };
+// Recompute every store from the ORIGINAL payload stores under `rules`.
+// Mirrors lib/engine.js compute() exactly: same tolerance, same S2W rule
+// (s2wStatus 'Unknown' means the sheet value was null), same effective tier
+// and space-mismatch rule (null effective counts as mismatch for rule stores).
+// recentDays / lastMonths / circle / storeStatus pass through untouched.
+function recomputeStores(rules){
+  const bt=baseTotalOf(rules), tiers=tiersOf(rules), cuts=rules.cuts||[];
+  return origStores.map(s=>{
+    const tier=(rules.mult||[]).find(m=>m.sqft===s.sqft);
+    const use=s.use||{}, usableTotal=s.usableTotal??Object.values(use).reduce((t,q)=>t+q,0);
+    if(!tier) return { ...s, materials:[], projected:0, actual:0, variance:0, status:'Unknown',
+      s2w:s.s2w||0, s2wMax:0, s2wStatus:'Unknown', excess:0, shortage:0,
+      effectiveSqft:effOf(usableTotal,bt,tiers,cuts), spaceMismatch:false, use, usableTotal };
+    const materials=rules.alloc.map(a=>{ const p=a.base*tier.m, act=use[a.material]||0, v=act-p;
+      return { material:a.material, projected:p, actual:act, variance:v, pct:p?v/p*100:0, s2w:null, status:statusOf(v,p) }; });
+    const projected=materials.reduce((t,m)=>t+m.projected,0), actual=materials.reduce((t,m)=>t+m.actual,0), v=actual-projected;
+    const w=s.s2w||0;
+    const s2wStatus=s.s2wStatus==='Unknown'?'Unknown':w>tier.s2w?'Limit Breached':w===tier.s2w?'At Limit':'Within Limit';
+    const eff=effOf(actual,bt,tiers,cuts);
+    return { ...s, materials, projected, actual, variance:v, s2w:w, s2wMax:tier.s2w, s2wStatus,
+      excess:materials.filter(m=>m.variance>0).reduce((t,m)=>t+m.variance,0),
+      shortage:materials.filter(m=>m.variance<0).reduce((t,m)=>t+m.variance,0),
+      status:statusOf(v,projected), effectiveSqft:eff, spaceMismatch:eff!==s.sqft, use, usableTotal };
+  });
+}
+function rebuildWarnings(rules){
+  const tiers=tiersOf(rules);
+  const kept=origWarnings.filter(w=>!/has no multiplier rule/.test(w));
+  const added=origStores.filter(s=>!tiers.includes(s.sqft))
+    .map(s=>'Store "'+s.store+'": Sq.Ft '+s.sqft+' has no multiplier rule');
+  return kept.concat(added).slice(0,200);
+}
+function renderBell(){ const w=D.warnings||[];
   $('bell-badge').textContent=w.length; $('bell-badge').classList.toggle('hide',!w.length);
   $('dq-badge').textContent=w.length; $('dq-badge').classList.toggle('hide',!w.length);
-  $('bell-dd').innerHTML=w.length? w.map(x=>`<div class="bell-item">${esc(x)}</div>`).join('') : '<div class="bell-item">No warnings.</div>';
+  $('bell-dd').innerHTML=w.length? w.map(x=>`<div class="bell-item">${esc(x)}</div>`).join('') : '<div class="bell-item">No warnings.</div>'; }
+// The live rules, normalised for a fair diff against the payload defaults.
+const normRules=r=>({alloc:(r.alloc||[]).map(a=>({material:a.material,base:+a.base})),
+  mult:[...(r.mult||[])].sort((a,b)=>a.sqft-b.sqft).map(m=>({sqft:+m.sqft,m:+m.m,s2w:+m.s2w})),
+  cuts:(r.cuts||[]).map(c=>({max:+c.max,sqft:+c.sqft}))});
+const customActive=()=>defaultRules&&JSON.stringify(normRules(D.rules))!==JSON.stringify(normRules(defaultRules));
+function updateCustomChip(){ const on=customActive();
+  $('custom-chip').classList.toggle('hide',!on); $('rules-chip').classList.toggle('hide',!on); }
+// Apply a rule set: recompute everything, save it, re-render the whole app.
+function applyRules(rules,save=true){
+  D.rules=rules; D.stores=recomputeStores(rules); D.warnings=rebuildWarnings(rules);
+  if(save){ try{ localStorage.setItem(LS_KEY,JSON.stringify(rules)); }catch(e){} }
+  const name=cur?cur.store:null;
+  cur=D.stores.find(s=>s.store===name)
+    ||D.stores.find(s=>(rules.mult||[]).some(m=>m.sqft===s.sqft))
+    ||D.stores[0]||null;
+  if(cur) $('store-search').value=cur.store;
+  kpiOpen=null; $('kpi-detail').classList.add('hide'); $('kpi-detail').innerHTML='';
+  renderBell(); renderDash(); drawRules(); renderDQ(); renderMaster(); updateCustomChip();
+}
+// Validate a rule set (imported JSON or a saved override). Returns an error
+// string, or null when the shape is good. Cuts must be one per band except
+// the largest, strictly increasing, and leading to the tiers in order.
+function validRules(r){
+  if(!r||typeof r!=='object') return 'Not a rules file.';
+  if(!Array.isArray(r.alloc)||!r.alloc.length) return 'alloc must be a non-empty list of {material, base}.';
+  for(const a of r.alloc){ if(!a||typeof a.material!=='string'||!a.material.trim()||!isFinite(+a.base)||+a.base<0) return 'Each alloc row needs a material name and a base qty (0 or more).'; }
+  if(!Array.isArray(r.mult)) return 'mult must be a list of {sqft, m, s2w}.';
+  const seen=new Set();
+  for(const m of r.mult){ if(!m||!isFinite(+m.sqft)||+m.sqft<=0||!isFinite(+m.m)||+m.m<0||!isFinite(+m.s2w)||+m.s2w<0) return 'Each mult row needs Sq.Ft (>0), multiplier (0 or more) and S2W max (0 or more).';
+    if(seen.has(+m.sqft)) return 'Duplicate Sq.Ft band: '+m.sqft+'.'; seen.add(+m.sqft); }
+  const tiers=tiersOf(r);
+  if(!Array.isArray(r.cuts)) return 'cuts must be a list (one per band except the largest).';
+  if(r.cuts.length!==Math.max(0,tiers.length-1)) return 'cuts must have exactly one entry per band except the largest ('+Math.max(0,tiers.length-1)+' expected, got '+r.cuts.length+').';
+  let prev=0;
+  for(let i=0;i<r.cuts.length;i++){ const c=r.cuts[i];
+    if(!c||!isFinite(+c.max)||+c.max<=0||+c.max<=prev) return 'Cutoffs must be positive and strictly increasing.';
+    if(+c.sqft!==tiers[i]) return 'Cutoff '+(i+1)+' must lead to '+tiers[i]+' Sq.Ft.'; prev=+c.max; }
+  return null;
+}
+const cleanRules=r=>({alloc:r.alloc.map(a=>({material:String(a.material).trim(),base:+a.base})),
+  mult:[...r.mult].sort((a,b)=>a.sqft-b.sqft).map(m=>({sqft:+m.sqft,m:+m.m,s2w:+m.s2w})),
+  cuts:(r.cuts||[]).map(c=>({max:+c.max,sqft:+c.sqft}))});
+function readSavedRules(){ try{ const raw=localStorage.getItem(LS_KEY); if(!raw) return null;
+    const r=JSON.parse(raw); const err=validRules(r); if(err) return null; return cleanRules(r); }catch(e){ return null; } }
+// Snapshot the payload, then re-apply a saved custom rule set if it validates.
+function initPayload(){
+  origStores=(D.stores||[]).slice();
+  origWarnings=(D.warnings||[]).slice();
+  defaultRules=cloneRules(D.rules);
+  const saved=readSavedRules();
+  if(saved){ D.rules=saved; D.stores=recomputeStores(saved); D.warnings=rebuildWarnings(saved); }
+}
+const rulesErr=m=>{ const el=$('rules-err'); el.textContent=m||''; el.className=m?'err-text':'err-text hide'; };
+// Midpoint between two neighbouring multipliers, rounded to 1 decimal —
+// the ratio boundary where one tier hands over to the next.
+const mid=(a,b)=>Math.round((a+b)/2*10)/10;
+// Keep cuts consistent with the bands: cuts[i] is the boundary between
+// tiers[i] and tiers[i+1], i.e. the midpoint of their multipliers.
+function maintainCutsAfterAdd(nr,i){
+  const ms=nr.mult;
+  if(ms.length<2) return;
+  if(i===ms.length-1){ // new largest band: boundary for the previous largest
+    nr.cuts.push({max:mid(ms[i-1].m,ms[i].m),sqft:ms[i-1].sqft}); }
+  else {
+    if(i>0){ const c=nr.cuts.find(x=>x.sqft===ms[i-1].sqft); if(c) c.max=mid(ms[i-1].m,ms[i].m); }
+    nr.cuts.push({max:mid(ms[i].m,ms[i+1].m),sqft:ms[i].sqft}); }
+  nr.cuts.sort((a,b)=>a.max-b.max);
+}
+function maintainCutsAfterDelete(nr,deletedSqft,i){
+  if(!nr.mult.length){ nr.cuts=[]; return; }
+  if(i===nr.mult.length){ // deleted band was the largest: the cut that led
+    // to the new largest tier is now the open end, so it goes away.
+    const top=nr.mult[nr.mult.length-1].sqft;
+    nr.cuts=nr.cuts.filter(x=>x.sqft!==top); }
+  else {
+    nr.cuts=nr.cuts.filter(x=>x.sqft!==deletedSqft);
+    if(i>0){ const c=nr.cuts.find(x=>x.sqft===nr.mult[i-1].sqft);
+      if(c) c.max=mid(nr.mult[i-1].m,nr.mult[i].m); } }
+  nr.cuts.sort((a,b)=>a.max-b.max);
+}
+
+function init(){
+  $('upd').textContent='Last Updated: '+new Date(D.updated).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'});
+  renderBell();
   $('st').length=0;
   D.stores.forEach(s=>$('st').insertAdjacentHTML('beforeend',`<option>${esc(s.store)}</option>`));
   // Default store: first in data order that has a multiplier rule (i.e. not Sq.Ft 300).
   cur=D.stores.find(s=>(D.rules.mult||[]).some(m=>m.sqft===s.sqft))||D.stores[0]||null;
   $('store-search').value=cur?cur.store:'';
   $('tol').textContent=D.matchTolerancePct??1;
-  renderDash(); drawRules(); renderDQ(); renderMaster('');
+  renderDash(); drawRules(); renderDQ(); renderMaster(''); updateCustomChip();
 }
 
 /* ---------- Dashboard ---------- */
@@ -199,7 +348,8 @@ function renderDonut(){
 
 function renderCapacity(){
   const rows=(D.rules.mult||[]).map(m=>({sqft:m.sqft,m:m.m+'x',s2w:m.s2w,norule:false}));
-  rows.push({sqft:300,m:'—',s2w:'—',norule:true});
+  // The 300 row is only a "no rule" placeholder when no 300 band exists.
+  if(!(D.rules.mult||[]).some(m=>m.sqft===300)) rows.push({sqft:300,m:'—',s2w:'—',norule:true});
   $('cap-table').innerHTML='<tr><th>Sq.Ft</th><th>Multiplier</th><th>S2W Limit</th></tr>'+
     rows.map(r=>`<tr class="${cur&&cur.sqft===r.sqft?'hl':''}"><td>${r.sqft}</td><td>${r.m}</td><td>${r.s2w}${r.norule?' <span class="muted">(No rule)</span>':''}</td></tr>`).join('');
 }
@@ -348,11 +498,85 @@ $('rep-short').onclick=()=>downloadCsv('shortage_stores.csv',[STORE_CSV_HEAD,...
 $('rep-excess').onclick=()=>downloadCsv('excess_stores.csv',[STORE_CSV_HEAD,...D.stores.filter(s=>s.status==='Excess').map(storeCsvRow)]);
 $('rep-breach').onclick=()=>downloadCsv('s2w_breaches.csv',[STORE_CSV_HEAD,...D.stores.filter(s=>s.s2wStatus==='Limit Breached').map(storeCsvRow)]);
 
-/* ---------- Allocation Rules / Data Quality ---------- */
+/* ---------- Allocation Rules (interactive) ----------
+   Every input commits on change (not on every keystroke, so the re-render
+   never steals focus mid-typing). Each edit clones the live rules, applies
+   the change, and recomputes the whole app via applyRules(). */
 function drawRules(){ if(!D.rules) return;
-  $('ra').innerHTML='<tr><th>Material</th><th>Base qty</th></tr>'+D.rules.alloc.map(a=>`<tr><td>${esc(a.material)}</td><td>${n(a.base)}</td></tr>`).join('');
-  $('rm').innerHTML='<tr><th>Sq.Ft</th><th>Multiplier</th><th>S2W max</th></tr>'+D.rules.mult.map(m=>`<tr><td>${m.sqft}</td><td>${m.m}x</td><td>${m.s2w}</td></tr>`).join('');
+  // The re-render replaces the inputs below; if one of them still has focus
+  // (a change handler runs mid-blur), blur it first — removing a focused
+  // node via innerHTML throws in Chrome ("node to be removed is no longer
+  // a child of this node").
+  const ae=document.activeElement;
+  if(ae&&($('ra').contains(ae)||$('rm').contains(ae)||$('rc').contains(ae))) ae.blur();
+  const R=D.rules;
+  $('ra').innerHTML='<tr><th>Material</th><th>Base qty</th></tr>'+R.alloc.map((a,i)=>
+    `<tr><td>${esc(a.material)}</td><td><input type="number" min="0" step="1" value="${a.base}" data-alloc="${i}" class="num" aria-label="Base qty for ${esc(a.material)}"></td></tr>`).join('');
+  $('rm').innerHTML='<tr><th>Sq.Ft</th><th>Multiplier</th><th>S2W max</th><th></th></tr>'+R.mult.map((m,i)=>
+    `<tr><td>${m.sqft}</td><td><input type="number" min="0" step="0.1" value="${m.m}" data-mult-m="${i}" class="num" aria-label="Multiplier for ${m.sqft} Sq.Ft"></td><td><input type="number" min="0" step="1" value="${m.s2w}" data-mult-s="${i}" class="num" aria-label="S2W max for ${m.sqft} Sq.Ft"></td><td><button class="icon-btn" data-del-mult="${i}" title="Delete the ${m.sqft} Sq.Ft band">×</button></td></tr>`).join('')+
+    `<tr><td><input type="number" min="1" step="1" id="new-sqft" placeholder="Sq.Ft" class="num" aria-label="New band Sq.Ft"></td><td><input type="number" min="0" step="0.1" id="new-m" placeholder="×" class="num" aria-label="New band multiplier"></td><td><input type="number" min="0" step="1" id="new-s2w" placeholder="S2W max" class="num" aria-label="New band S2W max"></td><td><button id="add-band">+ Add</button></td></tr>`;
+  const bt=baseTotalOf(R), tiers=tiersOf(R);
+  $('rc').innerHTML=(R.cuts||[]).map((c,i)=>
+    `<div class="cut-row"><label>Up to <input type="number" min="0.1" step="0.1" value="${c.max}" data-cut="${i}" class="num" aria-label="Cutoff leading to ${c.sqft} Sq.Ft">× base → ${c.sqft} Sq.Ft</label></div>`).join('')+
+    `<p class="muted">A store's actual stock ÷ ${n(bt)} (base total) decides its effective space${tiers.length?`; above the last cutoff it is the largest tier (${tiers[tiers.length-1]} Sq.Ft)`:''}. Cutoffs must stay in increasing order.</p>`;
+  // Base qty edits
+  document.querySelectorAll('#ra input[data-alloc]').forEach(el=>el.onchange=()=>{
+    const i=+el.dataset.alloc, raw=el.value.trim(), v=Number(raw);
+    if(raw===''||!isFinite(v)||v<0){ el.value=D.rules.alloc[i].base; rulesErr('Base qty must be 0 or more — kept the previous value.'); return; }
+    const nr=cloneRules(D.rules); nr.alloc[i].base=v; rulesErr(''); applyRules(nr); });
+  // Multiplier / S2W edits
+  document.querySelectorAll('#rm input[data-mult-m]').forEach(el=>el.onchange=()=>{
+    const i=+el.dataset.multM, raw=el.value.trim(), v=Number(raw);
+    if(raw===''||!isFinite(v)||v<0){ el.value=D.rules.mult[i].m; rulesErr('Multiplier must be 0 or more — kept the previous value.'); return; }
+    const nr=cloneRules(D.rules); nr.mult[i].m=v; rulesErr(''); applyRules(nr); });
+  document.querySelectorAll('#rm input[data-mult-s]').forEach(el=>el.onchange=()=>{
+    const i=+el.dataset.multS, raw=el.value.trim(), v=Number(raw);
+    if(raw===''||!isFinite(v)||v<0){ el.value=D.rules.mult[i].s2w; rulesErr('S2W max must be 0 or more — kept the previous value.'); return; }
+    const nr=cloneRules(D.rules); nr.mult[i].s2w=v; rulesErr(''); applyRules(nr); });
+  // Cutoff edits — must stay strictly increasing
+  document.querySelectorAll('#rc input[data-cut]').forEach(el=>el.onchange=()=>{
+    const i=+el.dataset.cut, raw=el.value.trim(), v=Number(raw);
+    const cuts=D.rules.cuts||[];
+    const prev=i>0?cuts[i-1].max:0, next=i<cuts.length-1?cuts[i+1].max:Infinity;
+    if(raw===''||!isFinite(v)||v<=0||v<=prev||v>=next){ el.value=cuts[i].max;
+      rulesErr('Cutoffs must stay in increasing order'+(i>0?' (above '+prev+'×)':'')+(i<cuts.length-1?' (below '+next+'×)':'')+' — kept the previous value.'); return; }
+    const nr=cloneRules(D.rules); nr.cuts[i].max=v; rulesErr(''); applyRules(nr); });
+  // Delete a band
+  document.querySelectorAll('#rm button[data-del-mult]').forEach(el=>el.onclick=()=>{
+    const i=+el.dataset.delMult, nr=cloneRules(D.rules);
+    const removed=nr.mult.splice(i,1)[0];
+    maintainCutsAfterDelete(nr,removed.sqft,i);
+    rulesErr(''); applyRules(nr);
+    if(!nr.mult.length) rulesErr('No Sq.Ft bands left — every store is now Unknown. Use Reset to restore the defaults.'); });
+  // Add a band
+  $('add-band').onclick=()=>{
+    const sqft=parseInt($('new-sqft').value,10), m=Number($('new-m').value), s2w=Number($('new-s2w').value);
+    if(!isFinite(sqft)||sqft<=0){ rulesErr('Enter a Sq.Ft size (a whole number above 0).'); return; }
+    if((D.rules.mult||[]).some(x=>x.sqft===sqft)){ rulesErr('A '+sqft+' Sq.Ft band already exists.'); return; }
+    if(!isFinite(m)||m<0){ rulesErr('Enter a multiplier (0 or more).'); return; }
+    if(!isFinite(s2w)||s2w<0){ rulesErr('Enter an S2W max (0 or more).'); return; }
+    const nr=cloneRules(D.rules);
+    nr.mult.push({sqft,m,s2w}); nr.mult.sort((a,b)=>a.sqft-b.sqft);
+    maintainCutsAfterAdd(nr,nr.mult.findIndex(x=>x.sqft===sqft));
+    rulesErr(''); applyRules(nr); };
 }
+function downloadFile(name,text,type){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([text],{type:type||'application/json'})); a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+$('rules-reset').onclick=()=>{ try{ localStorage.removeItem(LS_KEY); }catch(e){}
+  rulesErr(''); applyRules(cloneRules(defaultRules),false); };
+$('rules-export').onclick=()=>downloadFile('stock-tracker-rules.json',JSON.stringify(D.rules,null,2));
+$('rules-import-btn').onclick=()=>$('rules-import').click();
+$('rules-import').onchange=e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>{ let r; try{ r=JSON.parse(rd.result); }catch(err){ rulesErr('Could not read that file — it is not valid JSON.'); e.target.value=''; return; }
+    const err=validRules(r);
+    if(err){ rulesErr('That rules file was rejected: '+err); e.target.value=''; return; }
+    rulesErr(''); applyRules(cleanRules(r)); e.target.value=''; };
+  rd.onerror=()=>{ rulesErr('Could not read that file.'); e.target.value=''; };
+  rd.readAsText(f); };
 function renderDQ(){ $('wl').innerHTML=(D.warnings||[]).map(w=>`<li>${esc(w)}</li>`).join('')||'<li>No warnings.</li>'; }
 
 load();
