@@ -56,21 +56,51 @@ function effBox(s){
     const cls='ladder-cell'+(isOwn?' alloc':'')+(isEff?' eff '+cap.cls:'');
     const tag=isOwn&&isEff?'Allocated · Effective':isOwn?'Allocated':isEff?'Effective':'';
     return `<div class="${cls}"><b>${t}</b><span>Sq.Ft</span><i>${tag}</i><small class="ladder-range">${bandText(i)}</small></div>`; }).join('');
-  return `<div class="eff-box"><div class="eff-top"><div><span class="eff-label">Effective Space</span><b class="eff-val">${val}</b><span class="eff-vol">${volLine}</span></div><span class="eff-chip ${cap.cls}">${chip}</span></div><div class="ladder" style="grid-template-columns:repeat(${ladderTiers.length},1fr)">${cells}</div></div>`;
+  // Space Mismatch lives here now (not a KPI card any more): the count and
+  // the same drill-down the old KPI opened.
+  const mm=D.stores.filter(x=>x.spaceMismatch).length;
+  const mmLine=mm?`<button class="mismatch-link" data-open-kpi="mismatch">Space Mismatch: ${n(mm)} stores — View details</button>`:'';
+  return `<div class="eff-box"><div class="eff-top"><div><span class="eff-label">Effective Space</span><b class="eff-val">${val}</b><span class="eff-vol">${volLine}</span></div><span class="eff-chip ${cap.cls}">${chip}</span></div><div class="ladder" style="grid-template-columns:repeat(${ladderTiers.length},1fr)">${cells}</div>${mmLine}</div>`;
 }
 const PAGES=['dash','rec','ledger','txn','master','rules','reports','dq'];
 
+const PAGE_META={dash:['Store Stock Capacity Tracker','Projected vs Actual Stock, Space Utilization & S2W Monitoring'],
+ rec:['Store Reconciliation','Material-wise projected vs actual stock for one store'],
+ ledger:['Stock Ledger','Item-level stock movements'],
+ txn:['Transactions','Daily issuance history from EI Stats'],
+ master:['Stores Master','All stores with projected, actual and effective space'],
+ rules:['Allocation Rules','Base quantities, multipliers, S2W limits and effective-space thresholds'],
+ reports:['Reports','Download store, reconciliation and transaction reports'],
+ dq:['Data Quality','Warnings found while reading the source sheets']};
 function show(v){ PAGES.forEach(i=>$(i).classList.toggle('hide',i!==v));
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
+  const m=PAGE_META[v]; if(m){ $('page-title').textContent=m[0]; $('page-desc').textContent=m[1]; }
   if(v==='dash'&&D) renderDash();
+  if(v==='txn'&&D) renderTxnPage();
   document.querySelector('main').scrollTop=0; }
 document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>show(a.dataset.v));
 
-function load(force){ $('load').classList.remove('hide'); $('msg').classList.add('hide');
-  fetch('/api/data'+(force?'?force=1':'')).then(r=>r.json().then(d=>{if(!r.ok)throw new Error(d.error||r.statusText);return d}))
-  .then(d=>{D=d;$('load').classList.add('hide');initPayload();init();show('dash');})
-  .catch(e=>{$('load').classList.add('hide');$('msg').textContent='Could not load data: '+e.message;$('msg').classList.remove('hide');}); }
+/* Minimal loading screen: the stage text and bar advance at real load
+   phases (connect -> fetch -> calculate -> prepare). No percentage is
+   shown — the progress is not measurable in percent. On failure the
+   overlay stays with the source that failed and a Retry button. */
+const setStage=(t,w)=>{ $('load-stage').textContent=t; $('load-bar-fill').style.width=w+'%'; };
+function load(force){
+  $('load').classList.remove('hide'); $('load-err').classList.add('hide');
+  setStage('Connecting to Google Sheets...',15);
+  fetch('/api/data'+(force?'?force=1':''))
+  .then(r=>{ setStage('Fetching store records...',40);
+    return r.json().then(d=>{ if(!r.ok) throw new Error(d.error||r.statusText); return d; }); })
+  .then(d=>{ setStage('Calculating reconciliation...',70); D=d; initPayload(); init();
+    setStage('Preparing dashboard...',90);
+    $('load').classList.add('hide'); show('dash'); })
+  .catch(e=>{ $('load-bar-fill').style.width='100%';
+    $('load-stage').textContent='Could not load data.';
+    $('load-err-text').textContent='Could not load data from Google Sheets ('+e.message+'). Check the connection and try again.';
+    $('load-err').classList.remove('hide'); });
+}
 $('ref').onclick=()=>load(true);
+$('load-retry').onclick=()=>load(true);
 
 /* ---------- Editable allocation rules (client-side only) ----------
    The Worker has no write endpoint and no KV binding, so a rule edit lives
@@ -134,9 +164,11 @@ const customActive=()=>defaultRules&&JSON.stringify(normRules(D.rules))!==JSON.s
 function updateCustomChip(){ const on=customActive();
   $('custom-chip').classList.toggle('hide',!on); $('rules-chip').classList.toggle('hide',!on); }
 // Apply a rule set: recompute everything, save it, re-render the whole app.
-function applyRules(rules,save=true){
+// `note` (when given) is logged to the Change History tab.
+function applyRules(rules,save=true,note){
   D.rules=rules; D.stores=recomputeStores(rules); D.warnings=rebuildWarnings(rules);
   if(save){ try{ localStorage.setItem(LS_KEY,JSON.stringify(rules)); }catch(e){} }
+  if(note) logRuleChange(note);
   const name=cur?cur.store:null;
   cur=D.stores.find(s=>s.store===name)
     ||D.stores.find(s=>(rules.mult||[]).some(m=>m.sqft===s.sqft))
@@ -216,26 +248,46 @@ function init(){
   cur=D.stores.find(s=>(D.rules.mult||[]).some(m=>m.sqft===s.sqft))||D.stores[0]||null;
   $('store-search').value=cur?cur.store:'';
   $('tol').textContent=D.matchTolerancePct??1;
-  renderDash(); drawRules(); renderDQ(); renderMaster(''); updateCustomChip();
+  // Transactions page filters + Reports circle filter
+  $('txn-store').innerHTML='<option value="">All stores</option>'+D.stores.map(s=>`<option${cur&&s.store===cur.store?' selected':''}>${esc(s.store)}</option>`).join('');
+  $('txn-date').innerHTML='<option value="">All dates</option>'+(cur&&cur.recentDays?cur.recentDays.map(d=>`<option>${esc(d.label)}</option>`).join(''):'');
+  const circles=[...new Set(D.stores.map(s=>s.circle||'').filter(Boolean))].sort();
+  $('rep-circle').innerHTML='<option value="">All circles</option>'+circles.map(c=>`<option>${esc(c)}</option>`).join('');
+  renderDash(); drawRules(); renderDQ(); renderMaster(''); renderTxnPage(); updateCustomChip();
 }
 
 /* ---------- Dashboard ---------- */
 function renderDash(){ renderKpis(); renderPickerFields(); renderSummary(); renderDonut(); renderCapacity(); renderMaterial(); renderTxn(); renderTrend(); }
 
+/* KPI icons (inline SVG outline icons, matching the sidebar). */
+const IC={
+ store:'<svg viewBox="0 0 24 24"><path d="M3 9l1.5-5h15L21 9M3 9v11a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9M3 9h18M9 21v-6h6v6"/></svg>',
+ check:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>',
+ alert:'<svg viewBox="0 0 24 24"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
+ trend:'<svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>',
+ layers:'<svg viewBox="0 0 24 24"><path d="M12 2l10 5-10 5L2 7z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>'};
+/* Five KPI cards, in order. The classification is the store variance status,
+   renamed: Less Space = Shortage, Extra Space = Excess. Okay is the
+   remainder — Total minus Less minus Extra (Matched + Unknown today, since
+   Matched is 0). Dedicated is INDEPENDENT of status: stores whose actual
+   Sq.Ft is 300 (the dedicated size), counted from the store master. The two
+   42s coincide today only because Matched is 0; they are computed separately
+   and will diverge if a store ever lands Matched. */
 function renderKpis(){
-  const S=D.stores, cnt=x=>S.filter(s=>s.status===x).length;
-  const tot=S.length, m=cnt('Matched'), sh=cnt('Shortage'), ex=cnt('Excess'), un=cnt('Unknown');
-  const mm=S.filter(s=>s.spaceMismatch).length;
+  const S=D.stores, tot=S.length;
+  const less=S.filter(s=>s.status==='Shortage').length;
+  const extra=S.filter(s=>s.status==='Excess').length;
+  const okay=tot-less-extra;
+  const ded=S.filter(s=>s.sqft===300).length;
   const pc=x=>tot? (x/tot*100).toFixed(1)+'%' : '—';
   const card=(key,ic,label,val,p,icCls,ttl)=>`<div class="kpi ${kpiOpen===key?'open':''}" data-kpi="${key}" tabindex="0" role="button" title="${ttl||'Click to see the stores'}">
     <span class="kpi-ic ${icCls}">${ic}</span><span class="kpi-tx"><span>${label}</span><b>${n(val)}</b></span><span class="kpi-pc">${p}</span></div>`;
   $('kp').innerHTML=
-    card('total','🏪','Total Stores',tot,'','')+
-    card('compliant','✅','Compliant Stores',m,pc(m),'grn')+
-    card('shortage','⚠️','Shortage Stores',sh,pc(sh),'amb')+
-    card('excess','📈','Excess Stores',ex,pc(ex),'red')+
-    card('unknown','❓','Unknown (Sq.Ft 300)',un,pc(un),'gry')+
-    card('mismatch','📐','Space Mismatch',mm,pc(mm),'blu','Actual stock falls in a different Sq.Ft category than the store\u2019s own — click to see the stores');
+    card('total',IC.store,'Total Stores',tot,'','blu')+
+    card('okay',IC.check,'Okay Stores',okay,pc(okay),'grn','Neither less nor extra space — click to see the stores')+
+    card('less',IC.alert,'Less Space Stores',less,pc(less),'amb','Stock shortage — click to see the stores')+
+    card('extra',IC.trend,'Extra Space Stores',extra,pc(extra),'red','Excess stock — click to see the stores')+
+    card('dedicated',IC.layers,'Dedicated (300 Sq.Ft)',ded,pc(ded),'pur','Stores with 300 Sq.Ft — click to see the stores');
   document.querySelectorAll('#kp .kpi').forEach(el=>{
     el.onclick=()=>toggleKpi(el.dataset.kpi);
     el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleKpi(el.dataset.kpi);}};
@@ -243,14 +295,14 @@ function renderKpis(){
 }
 function kpiStores(key){
   if(key==='total') return D.stores;
-  if(key==='compliant') return D.stores.filter(s=>s.status==='Matched');
-  if(key==='shortage') return D.stores.filter(s=>s.status==='Shortage');
-  if(key==='excess') return D.stores.filter(s=>s.status==='Excess');
-  if(key==='unknown') return D.stores.filter(s=>s.status==='Unknown');
+  if(key==='okay') return D.stores.filter(s=>s.status!=='Shortage'&&s.status!=='Excess');
+  if(key==='less') return D.stores.filter(s=>s.status==='Shortage');
+  if(key==='extra') return D.stores.filter(s=>s.status==='Excess');
+  if(key==='dedicated') return D.stores.filter(s=>s.sqft===300);
   if(key==='mismatch') return D.stores.filter(s=>s.spaceMismatch);
   return [];
 }
-const KPI_TITLES={total:'All stores',compliant:'Compliant stores (Matched)',shortage:'Shortage stores',excess:'Excess stores',unknown:'Unknown stores (Sq.Ft 300 — no multiplier rule)',mismatch:'Space mismatch stores (actual stock in a different Sq.Ft category)'};
+const KPI_TITLES={total:'All stores',okay:'Okay stores (neither less nor extra space)',less:'Less Space stores (Shortage)',extra:'Extra Space stores (Excess)',dedicated:'Dedicated stores (300 Sq.Ft)',mismatch:'Space mismatch stores (actual stock in a different Sq.Ft category)'};
 function toggleKpi(key){
   kpiOpen=kpiOpen===key?null:key;
   renderKpis();
@@ -280,6 +332,7 @@ function renderPickerFields(){
   if(!cur) return;
   $('pf-circle').textContent=cur.circle||'—';
   $('pf-sqft').textContent=cur.sqft+' Sq.Ft';
+  $('pf-eff').textContent=cur.effectiveSqft==null?'—':cur.effectiveSqft+' Sq.Ft';
   const st=(cur.storeStatus||'').trim();
   $('pf-status').innerHTML=st? `<span class="pill ${st.toLowerCase()==='active'?'Active':'Unknown'}">${esc(st)}</span>` : '—';
 }
@@ -331,13 +384,15 @@ function renderDonut(){
   if(typeof Chart==='undefined'){
     const cnt={Matched:0,Shortage:0,Excess:0};
     cur.materials.forEach(m=>{cnt[m.status]=(cnt[m.status]||0)+1;});
-    empty.textContent='Chart could not be loaded (check your connection and refresh). Materials: Matched '+cnt.Matched+', Shortage '+cnt.Shortage+', Excess '+cnt.Excess+'.';
+    empty.textContent='Chart could not be loaded (check your connection and refresh). Materials: Excess '+cnt.Excess+', Shortage '+cnt.Shortage+', Matched '+cnt.Matched+'.';
     empty.classList.remove('hide'); $('donut-legend').innerHTML=''; return;
   }
   empty.classList.add('hide');
   const cnt={Matched:0,Shortage:0,Excess:0};
   cur.materials.forEach(m=>{cnt[m.status]=(cnt[m.status]||0)+1;});
-  const labels=['Matched','Shortage','Excess'], cols=['#22c55e','#ef4444','#3b82f6'];
+  // Donut follows the reconciliation colour convention: excess is green
+  // (more stock than projected), shortage red, matched neutral grey.
+  const labels=['Excess','Shortage','Matched'], cols=['#22c55e','#ef4444','#9ca3af'];
   const tot=cur.materials.length;
   charts.ch1=new Chart($('ch1'),{type:'doughnut',
     data:{labels,datasets:[{data:labels.map(l=>cnt[l]),backgroundColor:cols,borderWidth:2,borderColor:'#fff'}]},
@@ -394,9 +449,9 @@ function renderTrend(){
     data:{labels:ms.map(m=>m.label),datasets:[{data:ms.map(m=>m.value),backgroundColor:'#22c55e'}]},
     options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
 }
-document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+document.querySelectorAll('#dash-tabs .tab').forEach(t=>t.onclick=()=>{
   matTab=t.dataset.tab;
-  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
+  document.querySelectorAll('#dash-tabs .tab').forEach(x=>x.classList.toggle('on',x===t));
   $('tab-mat').classList.toggle('hide',matTab!=='mat');
   $('tab-txn').classList.toggle('hide',matTab!=='txn');
   $('tab-trend').classList.toggle('hide',matTab!=='trend');
@@ -404,6 +459,17 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   // Re-render the chart tab on open — a chart built while hidden has no size.
   if(matTab==='txn') renderTxn();
   if(matTab==='trend') renderTrend();
+});
+/* The Space Mismatch link inside the Effective Space box opens the same
+   drill-down the old KPI card used to open. */
+$('dash').addEventListener('click',e=>{ const b=e.target.closest('[data-open-kpi]'); if(!b) return;
+  if(kpiOpen!==b.dataset.openKpi) toggleKpi(b.dataset.openKpi);
+  $('kpi-detail').scrollIntoView({behavior:'smooth',block:'start'}); });
+/* Allocation Rules tabs: Base Allocation / Multipliers / S2W Limits /
+   Effective Space / Change History. */
+document.querySelectorAll('#rules-tabs .tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('#rules-tabs .tab').forEach(x=>x.classList.toggle('on',x===t));
+  ['base','mult','s2w','eff','hist'].forEach(k=>$('rtab-'+k).classList.toggle('hide',k!==t.dataset.rtab));
 });
 $('mat-export').onclick=()=>{ if(!cur) return;
   downloadCsv(cur.store+'_reconciliation.csv',
@@ -459,9 +525,9 @@ function rt(){ if(!cur) return;
   const q=$('q').value.toLowerCase();
   const R=cur.materials.filter(m=>m.material.toLowerCase().includes(q)).sort((a,b)=>(a[sortK]>b[sortK]?1:-1)*sortD);
   const H=[['material','Material'],['projected','Projected'],['actual','Actual'],['variance','Variance'],['pct','Var %'],['status','Status']];
-  $('rt').innerHTML='<tr>'+H.map(h=>`<th data-k="${h[0]}">${h[1]}</th>`).join('')+'</tr>'+
-    R.map(m=>`<tr><td>${esc(m.material)}</td><td>${n(m.projected)}</td><td>${n(m.actual)}</td><td class="${vc(m.variance)}">${sg(m.variance)}</td><td class="${vc(m.variance)}">${(m.pct>0?'+':'')+m.pct.toFixed(1)}%</td><td>${pill(m.status)}</td></tr>`).join('');
-  document.querySelectorAll('#rt th').forEach(t=>t.onclick=()=>{sortD=sortK===t.dataset.k?-sortD:1;sortK=t.dataset.k;rt();}); }
+  $('rt').innerHTML='<tr><th>#</th>'+H.map(h=>`<th data-k="${h[0]}">${h[1]}</th>`).join('')+'</tr>'+
+    R.map((m,i)=>`<tr><td>${i+1}</td><td>${esc(m.material)}</td><td>${n(m.projected)}</td><td>${n(m.actual)}</td><td class="${vc(m.variance)}">${sg(m.variance)}</td><td class="${vc(m.variance)}">${(m.pct>0?'+':'')+m.pct.toFixed(1)}%</td><td>${pill(m.status)}</td></tr>`).join('');
+  document.querySelectorAll('#rt th[data-k]').forEach(t=>t.onclick=()=>{sortD=sortK===t.dataset.k?-sortD:1;sortK=t.dataset.k;rt();}); }
 $('ap').onclick=apply;
 $('rs').onclick=()=>{cur=null;$('rt').innerHTML='';$('rk').innerHTML='';$('meta').textContent='';};
 $('q').oninput=rt;
@@ -484,6 +550,38 @@ function renderMaster(){
 }
 $('mq').addEventListener('input',renderMaster);
 
+/* ---------- Transactions page (real daily issuance from EI Stats) ----------
+   The page lists the daily issuance record every store already carries
+   (recentDays, last 15 days). Store / date / text filters + CSV export.
+   Item-level detail (material, reference number) is not in the source
+   data, so those columns are not shown. */
+function txnRows(){
+  const storeSel=$('txn-store').value, dateSel=$('txn-date').value, q=($('txn-q').value||'').trim().toLowerCase();
+  const rows=[];
+  D.stores.forEach(s=>{
+    if(storeSel&&s.store!==storeSel) return;
+    if(q&&!s.store.toLowerCase().includes(q)&&!(s.circle||'').toLowerCase().includes(q)) return;
+    (s.recentDays||[]).forEach(d=>{
+      if(dateSel&&d.label!==dateSel) return;
+      rows.push({label:d.label,store:s.store,circle:s.circle||'—',value:d.value});
+    });
+  });
+  return rows;
+}
+function renderTxnPage(){
+  if(!D) return;
+  const rows=txnRows();
+  $('txn-meta').textContent='Showing '+Math.min(rows.length,200)+' of '+rows.length.toLocaleString('en-IN')+' records';
+  const body=rows.slice(0,200).map(r=>`<tr><td>${esc(r.label)}</td><td>${esc(r.store)}</td><td>${esc(r.circle)}</td><td>Issuance</td><td>${n(r.value)}</td></tr>`).join('');
+  $('txn-table').innerHTML='<tr><th>Transaction Date</th><th>Store Name</th><th>Circle</th><th>Transaction Type</th><th>Quantity</th></tr>'+
+    (body||'<tr><td colspan="5" class="muted">No issuance records match these filters.</td></tr>');
+}
+$('txn-store').addEventListener('change',renderTxnPage);
+$('txn-date').addEventListener('change',renderTxnPage);
+$('txn-q').addEventListener('input',renderTxnPage);
+$('txn-export').onclick=()=>{ const rows=txnRows();
+  downloadCsv('transaction_report.csv',[['Transaction Date','Store','Circle','Transaction Type','Quantity'],...rows.map(r=>[r.label,r.store,r.circle,'Issuance',r.value])]); };
+
 /* ---------- Reports ---------- */
 function downloadCsv(name,rows){
   const csv=rows.map(r=>r.map(x=>{const v=String(x??'');return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}).join(',')).join('\n');
@@ -493,46 +591,71 @@ function downloadCsv(name,rows){
 }
 const STORE_CSV_HEAD=['Store','Circle','Sq.Ft','Store Status','Projected','Actual','Variance','S2W','S2W Max','S2W Status','Status'];
 const storeCsvRow=s=>[s.store,s.circle,s.sqft,(s.storeStatus||'').trim(),s.projected,s.actual,s.variance,s.s2w,s.s2wMax,s.s2wStatus,s.status];
-$('rep-all').onclick=()=>downloadCsv('all_stores.csv',[STORE_CSV_HEAD,...D.stores.map(storeCsvRow)]);
-$('rep-short').onclick=()=>downloadCsv('shortage_stores.csv',[STORE_CSV_HEAD,...D.stores.filter(s=>s.status==='Shortage').map(storeCsvRow)]);
-$('rep-excess').onclick=()=>downloadCsv('excess_stores.csv',[STORE_CSV_HEAD,...D.stores.filter(s=>s.status==='Excess').map(storeCsvRow)]);
-$('rep-breach').onclick=()=>downloadCsv('s2w_breaches.csv',[STORE_CSV_HEAD,...D.stores.filter(s=>s.s2wStatus==='Limit Breached').map(storeCsvRow)]);
+// The circle filter on the Reports page applies to every report below.
+const repStores=()=>{ const c=$('rep-circle').value; return c? D.stores.filter(s=>s.circle===c) : D.stores; };
+const repRows=list=>list.map(storeCsvRow);
+$('rep-all').onclick=()=>downloadCsv('all_stores.csv',[STORE_CSV_HEAD,...repRows(repStores())]);
+$('rep-short').onclick=()=>downloadCsv('shortage_stores.csv',[STORE_CSV_HEAD,...repRows(repStores().filter(s=>s.status==='Shortage'))]);
+$('rep-excess').onclick=()=>downloadCsv('excess_stores.csv',[STORE_CSV_HEAD,...repRows(repStores().filter(s=>s.status==='Excess'))]);
+$('rep-breach').onclick=()=>downloadCsv('s2w_breaches.csv',[STORE_CSV_HEAD,...repRows(repStores().filter(s=>s.s2wStatus==='Limit Breached'))]);
+$('rep-okay').onclick=()=>downloadCsv('okay_stores.csv',[STORE_CSV_HEAD,...repRows(repStores().filter(s=>s.status!=='Shortage'&&s.status!=='Excess'))]);
+$('rep-dedicated').onclick=()=>downloadCsv('dedicated_300sqft_stores.csv',[STORE_CSV_HEAD,...repRows(repStores().filter(s=>s.sqft===300))]);
+$('rep-material').onclick=()=>{ const rows=[];
+  repStores().forEach(s=>(s.materials||[]).forEach(m=>rows.push([s.store,s.circle,s.sqft,m.material,m.projected,m.actual,m.variance,m.pct.toFixed(1),m.status])));
+  downloadCsv('material_wise_stock.csv',[['Store','Circle','Sq.Ft','Material','Projected','Actual','Variance','Var%','Status'],...rows]); };
+$('rep-txn').onclick=()=>{ const rows=[];
+  repStores().forEach(s=>(s.recentDays||[]).forEach(d=>rows.push([d.label,s.store,s.circle,'Issuance',d.value])));
+  downloadCsv('transaction_report.csv',[['Transaction Date','Store','Circle','Transaction Type','Quantity'],...rows]); };
 
 /* ---------- Allocation Rules (interactive) ----------
    Every input commits on change (not on every keystroke, so the re-render
    never steals focus mid-typing). Each edit clones the live rules, applies
    the change, and recomputes the whole app via applyRules(). */
+/* Change History tab: rule edits are logged in this browser only (the
+   site has no login and no server-side save), newest first, capped at 50. */
+const HIST_KEY='stock-tracker-rules-history';
+function logRuleChange(note){ try{
+  const h=JSON.parse(localStorage.getItem(HIST_KEY)||'[]');
+  h.unshift({ts:Date.now(),note});
+  localStorage.setItem(HIST_KEY,JSON.stringify(h.slice(0,50))); }catch(e){} }
+function renderHistory(){ const el=$('rhist'); if(!el) return;
+  let h=[]; try{ h=JSON.parse(localStorage.getItem(HIST_KEY)||'[]'); }catch(e){}
+  el.innerHTML=h.length? h.map(x=>`<div class="hist-item">${esc(x.note)}<small>${new Date(x.ts).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'})} · This browser</small></div>`).join('')
+    : '<p class="muted">No rule changes recorded in this browser yet.</p>'; }
 function drawRules(){ if(!D.rules) return;
   // The re-render replaces the inputs below; if one of them still has focus
   // (a change handler runs mid-blur), blur it first — removing a focused
   // node via innerHTML throws in Chrome ("node to be removed is no longer
   // a child of this node").
   const ae=document.activeElement;
-  if(ae&&($('ra').contains(ae)||$('rm').contains(ae)||$('rc').contains(ae))) ae.blur();
+  if(ae&&($('ra').contains(ae)||$('rm-mult').contains(ae)||$('rm-s2w').contains(ae)||$('rc').contains(ae))) ae.blur();
   const R=D.rules;
   $('ra').innerHTML='<tr><th>Material</th><th>Base qty</th></tr>'+R.alloc.map((a,i)=>
     `<tr><td>${esc(a.material)}</td><td><input type="number" min="0" step="1" value="${a.base}" data-alloc="${i}" class="num" aria-label="Base qty for ${esc(a.material)}"></td></tr>`).join('');
-  $('rm').innerHTML='<tr><th>Sq.Ft</th><th>Multiplier</th><th>S2W max</th><th></th></tr>'+R.mult.map((m,i)=>
-    `<tr><td>${m.sqft}</td><td><input type="number" min="0" step="0.1" value="${m.m}" data-mult-m="${i}" class="num" aria-label="Multiplier for ${m.sqft} Sq.Ft"></td><td><input type="number" min="0" step="1" value="${m.s2w}" data-mult-s="${i}" class="num" aria-label="S2W max for ${m.sqft} Sq.Ft"></td><td><button class="icon-btn" data-del-mult="${i}" title="Delete the ${m.sqft} Sq.Ft band">×</button></td></tr>`).join('')+
-    `<tr><td><input type="number" min="1" step="1" id="new-sqft" placeholder="Sq.Ft" class="num" aria-label="New band Sq.Ft"></td><td><input type="number" min="0" step="0.1" id="new-m" placeholder="×" class="num" aria-label="New band multiplier"></td><td><input type="number" min="0" step="1" id="new-s2w" placeholder="S2W max" class="num" aria-label="New band S2W max"></td><td><button id="add-band">+ Add</button></td></tr>`;
+  $('rm-mult').innerHTML='<tr><th>Sq.Ft</th><th>Multiplier</th><th></th></tr>'+R.mult.map((m,i)=>
+    `<tr><td>${m.sqft}</td><td><input type="number" min="0" step="0.1" value="${m.m}" data-mult-m="${i}" class="num" aria-label="Multiplier for ${m.sqft} Sq.Ft"></td><td><button class="icon-btn" data-del-mult="${i}" title="Delete the ${m.sqft} Sq.Ft band">×</button></td></tr>`).join('');
+  $('rm-s2w').innerHTML='<tr><th>Sq.Ft</th><th>S2W max</th></tr>'+R.mult.map((m,i)=>
+    `<tr><td>${m.sqft}</td><td><input type="number" min="0" step="1" value="${m.s2w}" data-mult-s="${i}" class="num" aria-label="S2W max for ${m.sqft} Sq.Ft"></td></tr>`).join('');
   const bt=baseTotalOf(R), tiers=tiersOf(R);
   $('rc').innerHTML=(R.cuts||[]).map((c,i)=>
     `<div class="cut-row"><label>Up to <input type="number" min="0.1" step="0.1" value="${c.max}" data-cut="${i}" class="num" aria-label="Cutoff leading to ${c.sqft} Sq.Ft">× base → ${c.sqft} Sq.Ft</label></div>`).join('')+
     `<p class="muted">A store's actual stock ÷ ${n(bt)} (base total) decides its effective space${tiers.length?`; above the last cutoff it is the largest tier (${tiers[tiers.length-1]} Sq.Ft)`:''}. Cutoffs must stay in increasing order.</p>`;
+  renderHistory();
   // Base qty edits
   document.querySelectorAll('#ra input[data-alloc]').forEach(el=>el.onchange=()=>{
     const i=+el.dataset.alloc, raw=el.value.trim(), v=Number(raw);
     if(raw===''||!isFinite(v)||v<0){ el.value=D.rules.alloc[i].base; rulesErr('Base qty must be 0 or more — kept the previous value.'); return; }
-    const nr=cloneRules(D.rules); nr.alloc[i].base=v; rulesErr(''); applyRules(nr); });
-  // Multiplier / S2W edits
-  document.querySelectorAll('#rm input[data-mult-m]').forEach(el=>el.onchange=()=>{
+    const nr=cloneRules(D.rules); const old=nr.alloc[i].base; nr.alloc[i].base=v; rulesErr(''); applyRules(nr,true,nr.alloc[i].material+' base qty '+old+' → '+v); });
+  // Multiplier edits
+  document.querySelectorAll('#rm-mult input[data-mult-m]').forEach(el=>el.onchange=()=>{
     const i=+el.dataset.multM, raw=el.value.trim(), v=Number(raw);
     if(raw===''||!isFinite(v)||v<0){ el.value=D.rules.mult[i].m; rulesErr('Multiplier must be 0 or more — kept the previous value.'); return; }
-    const nr=cloneRules(D.rules); nr.mult[i].m=v; rulesErr(''); applyRules(nr); });
-  document.querySelectorAll('#rm input[data-mult-s]').forEach(el=>el.onchange=()=>{
+    const nr=cloneRules(D.rules); const old=nr.mult[i].m; nr.mult[i].m=v; rulesErr(''); applyRules(nr,true,nr.mult[i].sqft+' Sq.Ft multiplier '+old+'× → '+v+'×'); });
+  // S2W limit edits
+  document.querySelectorAll('#rm-s2w input[data-mult-s]').forEach(el=>el.onchange=()=>{
     const i=+el.dataset.multS, raw=el.value.trim(), v=Number(raw);
     if(raw===''||!isFinite(v)||v<0){ el.value=D.rules.mult[i].s2w; rulesErr('S2W max must be 0 or more — kept the previous value.'); return; }
-    const nr=cloneRules(D.rules); nr.mult[i].s2w=v; rulesErr(''); applyRules(nr); });
+    const nr=cloneRules(D.rules); const old=nr.mult[i].s2w; nr.mult[i].s2w=v; rulesErr(''); applyRules(nr,true,nr.mult[i].sqft+' Sq.Ft S2W max '+old+' → '+v); });
   // Cutoff edits — must stay strictly increasing
   document.querySelectorAll('#rc input[data-cut]').forEach(el=>el.onchange=()=>{
     const i=+el.dataset.cut, raw=el.value.trim(), v=Number(raw);
@@ -540,15 +663,15 @@ function drawRules(){ if(!D.rules) return;
     const prev=i>0?cuts[i-1].max:0, next=i<cuts.length-1?cuts[i+1].max:Infinity;
     if(raw===''||!isFinite(v)||v<=0||v<=prev||v>=next){ el.value=cuts[i].max;
       rulesErr('Cutoffs must stay in increasing order'+(i>0?' (above '+prev+'×)':'')+(i<cuts.length-1?' (below '+next+'×)':'')+' — kept the previous value.'); return; }
-    const nr=cloneRules(D.rules); nr.cuts[i].max=v; rulesErr(''); applyRules(nr); });
+    const nr=cloneRules(D.rules); const old=nr.cuts[i].max; nr.cuts[i].max=v; rulesErr(''); applyRules(nr,true,'Effective-space cutoff → '+cuts[i].sqft+' Sq.Ft: '+old+'× → '+v+'×'); });
   // Delete a band
-  document.querySelectorAll('#rm button[data-del-mult]').forEach(el=>el.onclick=()=>{
+  document.querySelectorAll('#rm-mult button[data-del-mult]').forEach(el=>el.onclick=()=>{
     const i=+el.dataset.delMult, nr=cloneRules(D.rules);
     const removed=nr.mult.splice(i,1)[0];
     maintainCutsAfterDelete(nr,removed.sqft,i);
-    rulesErr(''); applyRules(nr);
+    rulesErr(''); applyRules(nr,true,'Deleted the '+removed.sqft+' Sq.Ft band');
     if(!nr.mult.length) rulesErr('No Sq.Ft bands left — every store is now Unknown. Use Reset to restore the defaults.'); });
-  // Add a band
+  // Add a band (form sits under the multipliers table, in the same tab)
   $('add-band').onclick=()=>{
     const sqft=parseInt($('new-sqft').value,10), m=Number($('new-m').value), s2w=Number($('new-s2w').value);
     if(!isFinite(sqft)||sqft<=0){ rulesErr('Enter a Sq.Ft size (a whole number above 0).'); return; }
@@ -558,7 +681,7 @@ function drawRules(){ if(!D.rules) return;
     const nr=cloneRules(D.rules);
     nr.mult.push({sqft,m,s2w}); nr.mult.sort((a,b)=>a.sqft-b.sqft);
     maintainCutsAfterAdd(nr,nr.mult.findIndex(x=>x.sqft===sqft));
-    rulesErr(''); applyRules(nr); };
+    rulesErr(''); applyRules(nr,true,'Added '+sqft+' Sq.Ft band (×'+m+', S2W max '+s2w+')'); };
 }
 function downloadFile(name,text,type){
   const a=document.createElement('a');
@@ -566,7 +689,7 @@ function downloadFile(name,text,type){
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 $('rules-reset').onclick=()=>{ try{ localStorage.removeItem(LS_KEY); }catch(e){}
-  rulesErr(''); applyRules(cloneRules(defaultRules),false); };
+  rulesErr(''); applyRules(cloneRules(defaultRules),false,'Reset to defaults'); };
 $('rules-export').onclick=()=>downloadFile('stock-tracker-rules.json',JSON.stringify(D.rules,null,2));
 $('rules-import-btn').onclick=()=>$('rules-import').click();
 $('rules-import').onchange=e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return;
@@ -574,9 +697,34 @@ $('rules-import').onchange=e=>{ const f=e.target.files&&e.target.files[0]; if(!f
   rd.onload=()=>{ let r; try{ r=JSON.parse(rd.result); }catch(err){ rulesErr('Could not read that file — it is not valid JSON.'); e.target.value=''; return; }
     const err=validRules(r);
     if(err){ rulesErr('That rules file was rejected: '+err); e.target.value=''; return; }
-    rulesErr(''); applyRules(cleanRules(r)); e.target.value=''; };
+    rulesErr(''); applyRules(cleanRules(r),true,'Imported rules from '+f.name); e.target.value=''; };
   rd.onerror=()=>{ rulesErr('Could not read that file.'); e.target.value=''; };
   rd.readAsText(f); };
-function renderDQ(){ $('wl').innerHTML=(D.warnings||[]).map(w=>`<li>${esc(w)}</li>`).join('')||'<li>No warnings.</li>'; }
+/* Data Quality: the engine's warning strings are free text, so they are
+   categorised here into Issue Type / Store / Material / Severity /
+   Recommended Action. The full warning text stays as the Description. */
+function dqCat(w){
+  let m;
+  if(/has no multiplier rule/.test(w)){ m=w.match(/"([^"]+)"/); return {type:'Unknown store Sq.Ft',store:m?m[1]:'—',material:'—',sev:'Critical',act:'Add a multiplier rule for this Sq.Ft size on the Allocation Rules page.'}; }
+  if(/Report has no column for material/.test(w)){ m=w.match(/"([^"]+)"/); return {type:'Unknown material',store:'—',material:m?m[1]:'—',sev:'Critical',act:'Check the Report tab — the material column is missing, so its stock is not counted.'}; }
+  if(/Report store .* not found in EI Stats/.test(w)){ m=w.match(/"([^"]+)"/); return {type:'Missing store mapping',store:m?m[1]:'—',material:'—',sev:'Warning',act:'Add the store to EI Stats or check the store name spelling.'}; }
+  if(/non-numeric/.test(w)){ m=w.match(/^Report (\S+) \/ (\S+):/); return {type:'Invalid quantity',store:m?m[1]:'—',material:m?m[2]:'—',sev:'Warning',act:'Fix the cell value in the Report tab.'}; }
+  if(/blank usable-stock cells/.test(w)) return {type:'Missing data',store:'—',material:'—',sev:'Information',act:'Confirm the blank cells should be 0.'};
+  if(/have no row in Report/.test(w)) return {type:'Missing store mapping',store:'—',material:'—',sev:'Warning',act:'Add the missing rows to the Report tab.'};
+  if(/Duplicate store in EI Stats/.test(w)){ m=w.match(/: (.+)$/); return {type:'Duplicate record',store:m?m[1]:'—',material:'—',sev:'Warning',act:'Remove the duplicate row in EI Stats.'}; }
+  if(/Duplicate S2W row ignored/.test(w)){ m=w.match(/: (.+)$/); return {type:'Duplicate record',store:m?m[1]:'—',material:'—',sev:'Warning',act:'Remove the duplicate S2W row.'}; }
+  if(/S2W store .* not found in EI Stats/.test(w)){ m=w.match(/"([^"]+)"/); return {type:'S2W mapping issue',store:m?m[1]:'—',material:'—',sev:'Warning',act:'Add the store to EI Stats or check the name.'}; }
+  if(/invalid Total Count/.test(w)){ m=w.match(/^S2W (\S+):/); return {type:'Invalid quantity',store:m?m[1]:'—',material:'—',sev:'Warning',act:'Fix the Total Count in the S2W tab.'}; }
+  if(/have no S2W record/.test(w)) return {type:'S2W mapping issue',store:'—',material:'—',sev:'Information',act:'Add the S2W row — S2W shows as Unknown until then.'};
+  return {type:'Data warning',store:'—',material:'—',sev:'Warning',act:'Review the source sheet.'};
+}
+function renderDQ(){ const W=D.warnings||[];
+  const crit=W.filter(w=>dqCat(w).sev==='Critical').length;
+  $('dq-meta').textContent=W.length? W.length+' warnings · '+crit+' critical · '+(W.length-crit)+' other' : 'No warnings.';
+  const body=W.map(w=>{ const c=dqCat(w);
+    return `<tr><td>${esc(c.type)}</td><td>${esc(c.store)}</td><td>${esc(c.material)}</td><td>${esc(w)}</td><td><span class="sev sev-${c.sev}">${c.sev}</span></td><td>${esc(c.act)}</td></tr>`; }).join('');
+  $('dq-table').innerHTML='<tr><th>Issue Type</th><th>Store</th><th>Material</th><th>Description</th><th>Severity</th><th>Recommended Action</th></tr>'+
+    (body||'<tr><td colspan="6">No warnings.</td></tr>');
+}
 
 load();
