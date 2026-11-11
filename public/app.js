@@ -8,21 +8,38 @@ const vc=x=>x>0?'pos':x<0?'neg':'';
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pctOf=(v,p)=>p? v/p*100 : null;
 const fmtPct=p=>p===null?'—':(p>0?'+':'')+p.toFixed(1)+'%';
-// Capacity Status rule: alignment = actual / projected.
-// >=95% OKAY (green), 80–95% WATCH (amber), <80% CRITICAL (red); Unknown store -> '—' (grey).
-const capOf=s=>{ if(!s||s.status==='Unknown'||!s.projected) return {label:'—', cls:'cap-none'};
-  const a=s.actual/s.projected*100;
-  return a>=95?{label:'OKAY',cls:'cap-ok'}:a>=80?{label:'WATCH',cls:'cap-watch'}:{label:'CRITICAL',cls:'cap-crit'}; };
+// Capacity Status rule (SPACE-based): how much space the client's stock
+// occupies vs the space allocated to the store, via the effective tier
+// (actual stock / 6450 base total, nearest tier [25,50,100,200]).
+// effective == allocated -> OKAY (green); effective above allocated -> Extra Space (red);
+// effective below allocated, or no stock at all -> Less Space (amber); Sq.Ft 300 (no rule) -> '—' (grey).
+const capOf=s=>{ if(!s||s.status==='Unknown') return {label:'—', cls:'cap-none'};
+  if(s.effectiveSqft===null||s.effectiveSqft===undefined) return {label:'Less Space',cls:'cap-watch'};
+  if(s.effectiveSqft===s.sqft) return {label:'OKAY',cls:'cap-ok'};
+  return s.effectiveSqft>s.sqft?{label:'Extra Space',cls:'cap-crit'}:{label:'Less Space',cls:'cap-watch'}; };
 const s2wText=s=>s.s2wMax>0?`${n(s.s2w)} / ${n(s.s2wMax)}`:`${n(s.s2w)} / —`;
-// Effective-space line for the Store Stock Summary card (tiers in order).
+// Effective-space box for the Store Stock Summary card (tiers in order).
+// Big value + direction chip, then a tier ladder: the store's OWN tier gets an
+// outline + "Allocated" tag, the EFFECTIVE tier gets the status-colour fill +
+// "Effective" tag (both tags on one box when they are the same tier).
 const TIERS=[25,50,100,200];
-function effLine(s){
+function effBox(s){
   if(!s) return '';
-  if(s.effectiveSqft===null||s.effectiveSqft===undefined) return 'Effective space: No stock recorded';
-  if(s.status==='Unknown') return 'Effective space: '+s.effectiveSqft+' Sq.Ft';
-  if(s.effectiveSqft===s.sqft) return 'Effective space: '+s.sqft+' Sq.Ft — aligned with its space';
-  const d=Math.abs(TIERS.indexOf(s.effectiveSqft)-TIERS.indexOf(s.sqft));
-  return 'Effective space: '+s.effectiveSqft+' Sq.Ft — '+d+' tier'+(d>1?'s':'')+' '+(s.effectiveSqft>s.sqft?'above':'below')+' its '+s.sqft+' Sq.Ft';
+  const cap=capOf(s);
+  const eff=s.effectiveSqft;
+  let chip, val;
+  if(s.status==='Unknown'){ val=eff==null?'—':eff+' Sq.Ft'; chip='Allocated '+s.sqft+' Sq.Ft — no multiplier rule'; }
+  else if(eff===null||eff===undefined){ val='—'; chip='No stock recorded'; }
+  else if(eff===s.sqft){ val=eff+' Sq.Ft'; chip='Aligned with allocated '+s.sqft+' Sq.Ft'; }
+  else { val=eff+' Sq.Ft';
+    const d=Math.abs(TIERS.indexOf(eff)-TIERS.indexOf(s.sqft));
+    chip=(eff>s.sqft?'▲ ':'▼ ')+d+' tier'+(d>1?'s':'')+' '+(eff>s.sqft?'above':'below')+' allocated '+s.sqft+' Sq.Ft'; }
+  const cells=TIERS.map(t=>{
+    const isOwn=t===s.sqft&&s.status!=='Unknown', isEff=t===eff;
+    const cls='ladder-cell'+(isOwn?' alloc':'')+(isEff?' eff '+cap.cls:'');
+    const tag=isOwn&&isEff?'Allocated · Effective':isOwn?'Allocated':isEff?'Effective':'';
+    return `<div class="${cls}"><b>${t}</b><span>Sq.Ft</span><i>${tag}</i></div>`; }).join('');
+  return `<div class="eff-box"><div class="eff-top"><div><span class="eff-label">Effective Space</span><b class="eff-val">${val}</b></div><span class="eff-chip ${cap.cls}">${chip}</span></div><div class="ladder">${cells}</div></div>`;
 }
 const PAGES=['dash','rec','ledger','txn','master','rules','reports','dq'];
 
@@ -121,6 +138,9 @@ function renderPickerFields(){
 function renderSummary(){
   if(!cur) return;
   const cap=capOf(cur);
+  // Variance number follows the capacity status, not the variance sign:
+  // an over-occupied store must not show a big green variance next to a red badge.
+  const varCls=cap.cls==='cap-ok'?'pos':cap.cls==='cap-crit'?'neg':cap.cls==='cap-watch'?'warn':'';
   const b=$('cap-badge');
   b.textContent=cap.label==='—'?'Capacity Status: —':'Capacity Status: '+cap.label;
   b.className='cap-badge '+cap.cls;
@@ -129,7 +149,7 @@ function renderSummary(){
   $('sum-stats').innerHTML=
     stat('Projected Stock',n(cur.projected),mult?`As per ${cur.sqft} Sq.Ft (${mult.m}x)`:'No multiplier rule')+
     stat('Actual Usable Stock',n(cur.actual),'From Report tab')+
-    stat('Variance',sg(cur.variance),pctOf(cur.variance,cur.projected)===null?'—':fmtPct(pctOf(cur.variance,cur.projected))+' '+cur.status,vc(cur.variance))+
+    stat('Variance',sg(cur.variance),pctOf(cur.variance,cur.projected)===null?'—':fmtPct(pctOf(cur.variance,cur.projected))+' '+cur.status,varCls)+
     stat('S2W Stock',s2wText(cur),cur.s2wStatus,cur.s2wStatus==='Limit Breached'?'neg':'');
   const al=cur.projected? cur.actual/cur.projected*100 : null;
   $('align-pct').textContent=al===null?'—':al.toFixed(1)+'%';
@@ -137,7 +157,7 @@ function renderSummary(){
   const bar=$('align-bar');
   bar.style.width=al===null?'0%':Math.min(100,Math.max(0,al))+'%';
   bar.className='bar-'+cap.cls.replace('cap-','');
-  $('eff-line').textContent=effLine(cur);
+  $('eff-box').innerHTML=effBox(cur);
 }
 
 function centerTextPlugin(total){

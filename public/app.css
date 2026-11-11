@@ -75,7 +75,19 @@ header small{color:var(--mu)}
 .bar-watch{background:#f59e0b}
 .bar-crit{background:#ef4444}
 .bar-none{background:#9ca3af}
-.eff-line{margin-top:10px;font-size:12.5px;line-height:1.5}
+.warn{color:var(--amb)}
+.eff-box{margin-top:12px;border:1px solid var(--bd);border-radius:8px;padding:10px;background:#f9fafb}
+.eff-top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.eff-label{color:var(--mu);font-size:12px;display:block}
+.eff-val{font-size:22px}
+.eff-chip{margin-left:auto;padding:5px 10px;border-radius:20px;font-size:12px;font-weight:700;white-space:nowrap}
+.ladder{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
+.ladder-cell{border:1px solid var(--bd);border-radius:8px;padding:8px 4px 6px;text-align:center;background:#fff}
+.ladder-cell b{display:block;font-size:15px}
+.ladder-cell span{font-size:11px;color:var(--mu)}
+.ladder-cell.eff span{color:inherit}
+.ladder-cell i{display:block;font-style:normal;font-size:10.5px;font-weight:700;margin-top:4px;min-height:13px}
+.ladder-cell.alloc{border:2px solid var(--tx)}
 .cap-badge{padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700;white-space:nowrap}
 .cap-ok{background:var(--gbg);color:var(--grn)}
 .cap-watch{background:var(--abg);color:var(--amb)}
