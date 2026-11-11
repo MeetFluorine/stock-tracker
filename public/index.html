@@ -60,6 +60,7 @@
     <div class="align-head"><span>Stock Alignment (Usable)</span><b id="align-pct">—</b><span id="align-frac" class="muted"></span></div>
     <div class="bar"><div id="align-bar" class="bar-none" style="width:0%"></div></div>
    </div>
+   <div id="eff-line" class="eff-line muted"></div>
   </div>
   <div class="card">
    <div class="card-head">
@@ -71,8 +72,8 @@
     <button id="mat-export">⬇ Export</button>
    </div>
    <div id="tab-mat"><table id="mt"></table></div>
-   <div id="tab-txn" class="hide empty">No transaction ledger is connected yet. Actual stock on this tracker comes from the Report tab snapshot, so there is no per-transaction history to summarise. A ledger feed (dated inward / outward / issuance rows per store and material) would be needed to fill this tab.</div>
-   <div id="tab-trend" class="hide empty">No stock history is available — the Report tab is a single snapshot, so there is no trend to draw yet. Trend needs dated snapshots of the same Report over time.</div>
+   <div id="tab-txn" class="hide"><div id="txn-body"></div></div>
+   <div id="tab-trend" class="hide"><div id="trend-body"></div></div>
   </div>
  </div>
  </div>

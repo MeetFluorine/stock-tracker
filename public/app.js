@@ -14,6 +14,16 @@ const capOf=s=>{ if(!s||s.status==='Unknown'||!s.projected) return {label:'—',
   const a=s.actual/s.projected*100;
   return a>=95?{label:'OKAY',cls:'cap-ok'}:a>=80?{label:'WATCH',cls:'cap-watch'}:{label:'CRITICAL',cls:'cap-crit'}; };
 const s2wText=s=>s.s2wMax>0?`${n(s.s2w)} / ${n(s.s2wMax)}`:`${n(s.s2w)} / —`;
+// Effective-space line for the Store Stock Summary card (tiers in order).
+const TIERS=[25,50,100,200];
+function effLine(s){
+  if(!s) return '';
+  if(s.effectiveSqft===null||s.effectiveSqft===undefined) return 'Effective space: No stock recorded';
+  if(s.status==='Unknown') return 'Effective space: '+s.effectiveSqft+' Sq.Ft';
+  if(s.effectiveSqft===s.sqft) return 'Effective space: '+s.sqft+' Sq.Ft — aligned with its space';
+  const d=Math.abs(TIERS.indexOf(s.effectiveSqft)-TIERS.indexOf(s.sqft));
+  return 'Effective space: '+s.effectiveSqft+' Sq.Ft — '+d+' tier'+(d>1?'s':'')+' '+(s.effectiveSqft>s.sqft?'above':'below')+' its '+s.sqft+' Sq.Ft';
+}
 const PAGES=['dash','rec','ledger','txn','master','rules','reports','dq'];
 
 function show(v){ PAGES.forEach(i=>$(i).classList.toggle('hide',i!==v));
@@ -44,20 +54,22 @@ function init(){
 }
 
 /* ---------- Dashboard ---------- */
-function renderDash(){ renderKpis(); renderPickerFields(); renderSummary(); renderDonut(); renderCapacity(); renderMaterial(); }
+function renderDash(){ renderKpis(); renderPickerFields(); renderSummary(); renderDonut(); renderCapacity(); renderMaterial(); renderTxn(); renderTrend(); }
 
 function renderKpis(){
   const S=D.stores, cnt=x=>S.filter(s=>s.status===x).length;
   const tot=S.length, m=cnt('Matched'), sh=cnt('Shortage'), ex=cnt('Excess'), un=cnt('Unknown');
+  const mm=S.filter(s=>s.spaceMismatch).length;
   const pc=x=>tot? (x/tot*100).toFixed(1)+'%' : '—';
-  const card=(key,ic,label,val,p,icCls)=>`<div class="kpi ${kpiOpen===key?'open':''}" data-kpi="${key}" tabindex="0" role="button" title="Click to see the stores">
+  const card=(key,ic,label,val,p,icCls,ttl)=>`<div class="kpi ${kpiOpen===key?'open':''}" data-kpi="${key}" tabindex="0" role="button" title="${ttl||'Click to see the stores'}">
     <span class="kpi-ic ${icCls}">${ic}</span><span class="kpi-tx"><span>${label}</span><b>${n(val)}</b></span><span class="kpi-pc">${p}</span></div>`;
   $('kp').innerHTML=
     card('total','🏪','Total Stores',tot,'','')+
     card('compliant','✅','Compliant Stores',m,pc(m),'grn')+
     card('shortage','⚠️','Shortage Stores',sh,pc(sh),'amb')+
     card('excess','📈','Excess Stores',ex,pc(ex),'red')+
-    card('unknown','❓','Unknown (Sq.Ft 300)',un,pc(un),'gry');
+    card('unknown','❓','Unknown (Sq.Ft 300)',un,pc(un),'gry')+
+    card('mismatch','📐','Space Mismatch',mm,pc(mm),'blu','Actual stock falls in a different Sq.Ft category than the store\u2019s own — click to see the stores');
   document.querySelectorAll('#kp .kpi').forEach(el=>{
     el.onclick=()=>toggleKpi(el.dataset.kpi);
     el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleKpi(el.dataset.kpi);}};
@@ -69,18 +81,27 @@ function kpiStores(key){
   if(key==='shortage') return D.stores.filter(s=>s.status==='Shortage');
   if(key==='excess') return D.stores.filter(s=>s.status==='Excess');
   if(key==='unknown') return D.stores.filter(s=>s.status==='Unknown');
+  if(key==='mismatch') return D.stores.filter(s=>s.spaceMismatch);
   return [];
 }
-const KPI_TITLES={total:'All stores',compliant:'Compliant stores (Matched)',shortage:'Shortage stores',excess:'Excess stores',unknown:'Unknown stores (Sq.Ft 300 — no multiplier rule)'};
+const KPI_TITLES={total:'All stores',compliant:'Compliant stores (Matched)',shortage:'Shortage stores',excess:'Excess stores',unknown:'Unknown stores (Sq.Ft 300 — no multiplier rule)',mismatch:'Space mismatch stores (actual stock in a different Sq.Ft category)'};
 function toggleKpi(key){
   kpiOpen=kpiOpen===key?null:key;
   renderKpis();
   if(!kpiOpen){ $('kpi-detail').classList.add('hide'); $('kpi-detail').innerHTML=''; return; }
   const rows=kpiStores(key), el=$('kpi-detail');
+  const dirOf=s=>{
+    if(s.effectiveSqft===null||s.effectiveSqft===undefined) return 'No stock';
+    if(s.effectiveSqft>s.sqft) return '▲ Over';
+    if(s.effectiveSqft<s.sqft) return '▼ Under';
+    return '—'; };
+  const tbl= key==='mismatch'
+    ? `<div class="tbl-scroll"><table><tr><th>Store</th><th>Circle</th><th>Own Sq.Ft</th><th>Effective Sq.Ft</th><th>Direction</th><th>Actual</th><th>Projected</th></tr>`+
+      rows.map(s=>`<tr class="clickable" data-store="${esc(s.store)}"><td>${esc(s.store)}</td><td>${esc(s.circle||'—')}</td><td>${s.sqft}</td><td>${s.effectiveSqft==null?'—':s.effectiveSqft}</td><td>${dirOf(s)}</td><td>${n(s.actual)}</td><td>${n(s.projected)}</td></tr>`).join('')+'</table></div>'
+    : `<div class="tbl-scroll"><table><tr><th>Store</th><th>Circle</th><th>Sq.Ft</th><th>Projected</th><th>Actual</th><th>Variance</th><th>S2W</th><th>Status</th></tr>`+
+      rows.map(s=>`<tr class="clickable" data-store="${esc(s.store)}"><td>${esc(s.store)}</td><td>${esc(s.circle||'—')}</td><td>${s.sqft}</td><td>${n(s.projected)}</td><td>${n(s.actual)}</td><td class="${vc(s.variance)}">${sg(s.variance)}</td><td>${s2wText(s)}</td><td>${pill(s.status)}</td></tr>`).join('')+'</table></div>';
   el.innerHTML=`<div class="card-head"><h2>${KPI_TITLES[key]} — ${rows.length}</h2><button id="kpi-close">✕ Close</button></div>`+
-    (rows.length? `<div class="tbl-scroll"><table><tr><th>Store</th><th>Circle</th><th>Sq.Ft</th><th>Projected</th><th>Actual</th><th>Variance</th><th>S2W</th><th>Status</th></tr>`+
-    rows.map(s=>`<tr class="clickable" data-store="${esc(s.store)}"><td>${esc(s.store)}</td><td>${esc(s.circle||'—')}</td><td>${s.sqft}</td><td>${n(s.projected)}</td><td>${n(s.actual)}</td><td class="${vc(s.variance)}">${sg(s.variance)}</td><td>${s2wText(s)}</td><td>${pill(s.status)}</td></tr>`).join('')+'</table></div>'
-    : '<p class="muted">No stores in this category.</p>');
+    (rows.length? tbl : '<p class="muted">No stores in this category.</p>');
   el.classList.remove('hide');
   $('kpi-close').onclick=()=>{kpiOpen=null;renderKpis();el.classList.add('hide');el.innerHTML='';};
   el.querySelectorAll('tr.clickable').forEach(tr=>tr.onclick=()=>{
@@ -116,6 +137,7 @@ function renderSummary(){
   const bar=$('align-bar');
   bar.style.width=al===null?'0%':Math.min(100,Math.max(0,al))+'%';
   bar.className='bar-'+cap.cls.replace('cap-','');
+  $('eff-line').textContent=effLine(cur);
 }
 
 function centerTextPlugin(total){
@@ -171,6 +193,37 @@ function renderMaterial(){
   el.innerHTML='<tr><th>#</th><th>Material</th><th>Projected Qty ('+cur.sqft+' Sq.Ft)</th><th>Actual Usable Qty</th><th>Variance (Actual - Projected)</th><th>Variance %</th><th>Status</th></tr>'+
     cur.materials.map((m,i)=>`<tr><td>${i+1}</td><td>${esc(m.material)}</td><td>${n(m.projected)}</td><td>${n(m.actual)}</td><td class="${vc(m.variance)}">${sg(m.variance)}</td><td class="${vc(m.variance)}">${(m.pct>0?'+':'')+m.pct.toFixed(1)}%</td><td>${pill(m.status)}</td></tr>`).join('');
 }
+/* ---------- Transaction Summary + Trend tabs (EI Stats issuance history) ---------- */
+function renderTxn(){
+  const el=$('txn-body'); if(!cur) return;
+  const days=cur.recentDays||[];
+  if(!days.length){ el.innerHTML='<p class="empty">No daily issuance record is available in EI Stats — the daily matrix has no dated columns, so there is nothing to show for this store.</p>'; return; }
+  const tot=days.reduce((t,d)=>t+d.value,0);
+  el.innerHTML='<p class="muted">Last 15 days · from EI Stats daily record</p>'+
+    (typeof Chart==='undefined'?'':'<div style="max-width:560px;margin:0 auto 10px"><canvas id="ch-txn" height="120"></canvas></div>')+
+    '<table><tr><th>Date</th><th>Issuance count</th></tr>'+
+    days.map(d=>`<tr><td>${esc(d.label)}</td><td>${n(d.value)}</td></tr>`).join('')+
+    `<tr><td><b>Total (15 days)</b></td><td><b>${n(tot)}</b></td></tr></table>`;
+  if(typeof Chart==='undefined') return;
+  if(charts.txn){charts.txn.destroy();charts.txn=null;}
+  charts.txn=new Chart($('ch-txn'),{type:'bar',
+    data:{labels:days.map(d=>d.label),datasets:[{data:days.map(d=>d.value),backgroundColor:'#3b82f6'}]},
+    options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
+}
+function renderTrend(){
+  const el=$('trend-body'); if(!cur) return;
+  const ms=cur.lastMonths||[];
+  if(!ms.length){ el.innerHTML='<p class="empty">No monthly issuance record is available in EI Stats — no month columns were found, so there is no trend to draw.</p>'; return; }
+  el.innerHTML='<p class="muted">Last 3 months · from EI Stats monthly totals (last month is so far)</p>'+
+    (typeof Chart==='undefined'?'':'<div style="max-width:560px;margin:0 auto 10px"><canvas id="ch-trend" height="120"></canvas></div>')+
+    '<table><tr><th>Month</th><th>Issuance</th></tr>'+
+    ms.map((m,i)=>`<tr><td>${esc(m.label)}${i===ms.length-1?' (so far)':''}</td><td>${n(m.value)}</td></tr>`).join('')+'</table>';
+  if(typeof Chart==='undefined') return;
+  if(charts.trend){charts.trend.destroy();charts.trend=null;}
+  charts.trend=new Chart($('ch-trend'),{type:'bar',
+    data:{labels:ms.map(m=>m.label),datasets:[{data:ms.map(m=>m.value),backgroundColor:'#22c55e'}]},
+    options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
+}
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   matTab=t.dataset.tab;
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
@@ -178,6 +231,9 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   $('tab-txn').classList.toggle('hide',matTab!=='txn');
   $('tab-trend').classList.toggle('hide',matTab!=='trend');
   $('mat-export').style.visibility=matTab==='mat'?'visible':'hidden';
+  // Re-render the chart tab on open — a chart built while hidden has no size.
+  if(matTab==='txn') renderTxn();
+  if(matTab==='trend') renderTrend();
 });
 $('mat-export').onclick=()=>{ if(!cur) return;
   downloadCsv(cur.store+'_reconciliation.csv',
@@ -249,8 +305,8 @@ function renderMaster(){
   const q=($('mq').value||'').trim().toLowerCase();
   const rows=D.stores.filter(s=>!q||s.store.toLowerCase().includes(q)||(s.circle||'').toLowerCase().includes(q));
   $('mmeta').textContent=rows.length+' of '+D.stores.length+' stores';
-  $('mtbl').innerHTML='<tr><th>Store</th><th>Circle</th><th>Sq.Ft</th><th>Store Status</th><th>Projected</th><th>Actual</th><th>Variance</th><th>S2W</th><th>Status</th></tr>'+
-    rows.map(s=>`<tr class="clickable" data-store="${esc(s.store)}"><td>${esc(s.store)}</td><td>${esc(s.circle||'—')}</td><td>${s.sqft}</td><td>${(s.storeStatus||'').trim()?esc(s.storeStatus):'—'}</td><td>${n(s.projected)}</td><td>${n(s.actual)}</td><td class="${vc(s.variance)}">${sg(s.variance)}</td><td>${s2wText(s)}</td><td>${pill(s.status)}</td></tr>`).join('');
+  $('mtbl').innerHTML='<tr><th>Store</th><th>Circle</th><th>Sq.Ft</th><th>Effective Sq.Ft</th><th>Store Status</th><th>Projected</th><th>Actual</th><th>Variance</th><th>S2W</th><th>Status</th></tr>'+
+    rows.map(s=>`<tr class="clickable" data-store="${esc(s.store)}"><td>${esc(s.store)}</td><td>${esc(s.circle||'—')}</td><td>${s.sqft}</td><td>${s.effectiveSqft==null?'—':s.effectiveSqft}</td><td>${(s.storeStatus||'').trim()?esc(s.storeStatus):'—'}</td><td>${n(s.projected)}</td><td>${n(s.actual)}</td><td class="${vc(s.variance)}">${sg(s.variance)}</td><td>${s2wText(s)}</td><td>${pill(s.status)}</td></tr>`).join('');
   $('mtbl').querySelectorAll('tr.clickable').forEach(tr=>tr.onclick=()=>{
     const s=D.stores.find(x=>x.store===tr.dataset.store); if(!s) return;
     selectStore(s); show('dash'); $('summary-card').scrollIntoView({behavior:'smooth',block:'start'});
