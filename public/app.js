@@ -135,6 +135,14 @@ function renderDonut(){
     empty.textContent='No multiplier rule for Sq.Ft '+(cur?cur.sqft:'—')+' — no materials to show.';
     empty.classList.remove('hide'); $('donut-legend').innerHTML=''; return;
   }
+  // If the Chart.js CDN failed to load, don't kill the whole dashboard —
+  // show the counts as text and let the rest of the page render.
+  if(typeof Chart==='undefined'){
+    const cnt={Matched:0,Shortage:0,Excess:0};
+    cur.materials.forEach(m=>{cnt[m.status]=(cnt[m.status]||0)+1;});
+    empty.textContent='Chart could not be loaded (check your connection and refresh). Materials: Matched '+cnt.Matched+', Shortage '+cnt.Shortage+', Excess '+cnt.Excess+'.';
+    empty.classList.remove('hide'); $('donut-legend').innerHTML=''; return;
+  }
   empty.classList.add('hide');
   const cnt={Matched:0,Shortage:0,Excess:0};
   cur.materials.forEach(m=>{cnt[m.status]=(cnt[m.status]||0)+1;});
